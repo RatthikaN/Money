@@ -1,0 +1,5 @@
+{
+  "name": "MoneyFlow - Money Management App",
+  "description": "A comprehensive UI for managing expenses, income, recurring payments, and financial reports with a mock backend service.",
+  "requestFramePermissions": []
+}
