@@ -42,9 +42,9 @@ export const Incoming: React.FC = () => {
       setPayments(paymentsData || []);
       setClients(clientsData || []);
       
-      // Filter for active Income rules
+      // Filter for ALL active rules (Show both Income and Expense so user can find them if categorized differently)
       const activeRules = Array.isArray(recurringData) 
-        ? recurringData.filter(r => r.type === 'Income' && r.status === 'Active') 
+        ? recurringData.filter(r => r.status === 'Active') 
         : [];
       setRecurringRules(activeRules);
     } catch (e) {
@@ -123,7 +123,7 @@ export const Incoming: React.FC = () => {
         }
         setIsModalOpen(false);
         setFormData({ status: 'Pending', mode: 'Bank', date: new Date().toISOString().split('T')[0], paymentType: 'One Time Payment' });
-        loadData();
+        loadData(); // Force refresh to show correct data from DB
       } catch (e) {
         alert("Failed to save payment.");
       }
@@ -231,7 +231,13 @@ export const Incoming: React.FC = () => {
                     <div className="flex justify-center space-x-2">
                       <button type="button" onClick={() => handleView(item)} className="p-1 text-gray-400 hover:text-blue-600"><Eye size={18} /></button>
                       <button type="button" onClick={() => handleEdit(item)} className="p-1 text-gray-400 hover:text-green-600"><Edit2 size={18} /></button>
-                      <button type="button" onClick={(e) => handleDelete(e, item.id)} className="p-1 text-gray-400 hover:text-red-600"><Trash2 size={18} /></button>
+                      <button 
+                        type="button" 
+                        onClick={(e) => handleDelete(e, item.id)} 
+                        className="p-1 text-gray-400 hover:text-red-600"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -270,11 +276,11 @@ export const Incoming: React.FC = () => {
                    value={selectedRecurringId}
                    onChange={(e) => handleRecurringSelect(e.target.value)}
                  >
-                   <option value="">-- Select Recurring Client --</option>
-                   {(!recurringRules || recurringRules.length === 0) && <option disabled>No active recurring income rules found</option>}
+                   <option value="">-- Select Recurring Rule --</option>
+                   {(!recurringRules || recurringRules.length === 0) && <option disabled>No active recurring rules found</option>}
                    {recurringRules && recurringRules.map(rule => (
                      <option key={rule.id} value={rule.id}>
-                       {rule.name} - {currency}{Number(rule.amount).toLocaleString()} ({rule.frequency})
+                       [{rule.type}] {rule.name} - {currency}{Number(rule.amount).toLocaleString()} ({rule.frequency})
                      </option>
                    ))}
                  </select>

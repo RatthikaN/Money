@@ -9,7 +9,9 @@ export const Users: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<Partial<User>>({
+  
+  // Extend User type locally to include password for the form
+  const [formData, setFormData] = useState<Partial<User> & { password?: string }>({
     role: 'Manager',
     status: 'Active'
   });
@@ -26,13 +28,13 @@ export const Users: React.FC = () => {
 
   const handleAddNew = () => {
     setEditingId(null);
-    setFormData({ role: 'Manager', status: 'Active' });
+    setFormData({ role: 'Manager', status: 'Active', password: '' });
     setIsModalOpen(true);
   };
 
   const handleEdit = (user: User) => {
     setEditingId(user.id);
-    setFormData({ ...user });
+    setFormData({ ...user, password: '' }); // Don't show existing hash
     setIsModalOpen(true);
   };
 
@@ -165,6 +167,22 @@ export const Users: React.FC = () => {
               onChange={e => setFormData({...formData, email: e.target.value})} 
             />
           </div>
+
+          {/* New Password Field - Only required when creating a new user */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {editingId ? "Reset Password (Optional)" : "Password"}
+            </label>
+            <input 
+              required={!editingId}
+              type="password"
+              placeholder={editingId ? "Leave blank to keep current" : "Set login password"}
+              className="w-full border border-gray-300 rounded-lg p-2" 
+              value={formData.password || ''}
+              onChange={e => setFormData({...formData, password: e.target.value})} 
+            />
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
