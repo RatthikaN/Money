@@ -1,24 +1,21 @@
 
-import { GoogleGenAI, Schema, Type } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
-const apiKey = import.meta.env.VITE_API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+// Initialize the client
+// The APIkey must be obtained exclusively from the environment variable process.env.API_KEY.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Helper to clean JSON string if model adds markdown
 const cleanJson = (text: string) => {
+  if (!text) return "";
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
 };
 
 export const aiService = {
   /**
-   * Extracts details from an invoice image.
+   * Extracts details from an invoice image using Gemini 2.5 Flash.
    */
   extractInvoiceDetails: async (base64Image: string, mimeType: string) => {
-    if (!apiKey) {
-      console.warn("No API Key found for Gemini");
-      return null;
-    }
-
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -31,20 +28,22 @@ export const aiService = {
               }
             },
             {
-              text: "Extract the following details from this invoice/bill image: Client/Payer Name, Total Amount, Date of Invoice, Invoice/Transaction Number. Return a JSON object."
+              text: "Analyze this image. If it is an invoice or bill, extract: Client/Payer Name, Total Amount, Date, and Invoice Number. If it is not a bill, return null values."
             }
           ]
         },
         config: {
           responseMimeType: "application/json",
+          // Disable thinking for faster latency on simple extraction tasks
+          thinkingConfig: { thinkingBudget: 0 },
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              client: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              date: { type: Type.STRING, description: "YYYY-MM-DD format" },
-              transactionNo: { type: Type.STRING },
-              paymentType: { type: Type.STRING, description: "Brief description of service/product" }
+              client: { type: Type.STRING, nullable: true },
+              amount: { type: Type.NUMBER, nullable: true },
+              date: { type: Type.STRING, description: "YYYY-MM-DD format", nullable: true },
+              transactionNo: { type: Type.STRING, nullable: true },
+              paymentType: { type: Type.STRING, description: "Brief description of service/product", nullable: true }
             }
           }
         }
@@ -60,11 +59,55 @@ export const aiService = {
   },
 
   /**
+   * Extracts business details from a GST certificate or registration document.
+   */
+  extractBusinessDetails: async (base64Image: string, mimeType: string) => {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Image
+              }
+            },
+            {
+              text: "Analyze this image. It is a GST certificate or business registration document. Extract the Business Name, Complete Address components (City, State, Zip), and GST/Registration Number."
+            }
+          ]
+        },
+        config: {
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingBudget: 0 },
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              companyName: { type: Type.STRING, description: "Legal Trade Name" },
+              address: { type: Type.STRING, description: "Street address part" },
+              city: { type: Type.STRING },
+              state: { type: Type.STRING },
+              zipCode: { type: Type.STRING },
+              gstNumber: { type: Type.STRING, description: "GSTIN or Registration No" }
+            }
+          }
+        }
+      });
+
+      const text = response.text;
+      if (!text) return null;
+      return JSON.parse(cleanJson(text));
+    } catch (error) {
+      console.error("GST Extraction Failed:", error);
+      throw error;
+    }
+  },
+
+  /**
    * Generates financial insights based on provided data context.
    */
   generateInsights: async (data: any, context: 'Incoming' | 'Recurring' | 'Reports') => {
-    if (!apiKey) return "AI Insights unavailable (Missing API Key).";
-
     try {
       const promptMap = {
         Incoming: "Analyze this list of recent incoming payments. Identify the top client, payment consistency trends, and any cash flow observations. Keep it under 50 words.",
@@ -74,7 +117,10 @@ export const aiService = {
 
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `Context: ${JSON.stringify(data)}. Task: ${promptMap[context]}`
+        contents: `Context: ${JSON.stringify(data)}. Task: ${promptMap[context]}`,
+        config: {
+          thinkingConfig: { thinkingBudget: 0 }
+        }
       });
 
       return response.text || "No insights generated.";
@@ -88,11 +134,8 @@ export const aiService = {
    * Chat with the data for the Assistant
    */
   chatWithData: async (userMessage: string, data: any, type: string) => {
-    if (!apiKey) return "I can't access my brain right now (API Key missing).";
-
     try {
-      // We slice the data to ensure we don't accidentally exceed massive token limits if mock data grows huge,
-      // though Gemini Flash has a very large context window.
+      // Limit context size strictly to avoid token issues
       const dataContext = JSON.stringify(data).slice(0, 50000); 
 
       const prompt = `
@@ -111,7 +154,7 @@ export const aiService = {
         2. If the data doesn't contain the answer, politely say so.
         3. Perform calculations if asked (e.g., "Total spent on Amazon").
         4. Keep your answer concise, friendly, and professional.
-        5. Format money with $ symbols.
+        5. Format money with $ or the appropriate currency symbol found in data.
       `;
 
       const response = await ai.models.generateContent({

@@ -1,8 +1,8 @@
-
 import React from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
+import { SignUp } from './pages/SignUp';
 import { Dashboard } from './pages/Dashboard';
 import { Expenses } from './pages/Expenses';
 import { Incoming } from './pages/Incoming';
@@ -15,7 +15,7 @@ import { Clients } from './pages/Clients';
 // Private Route Wrapper
 const PrivateRoute = ({ children }: { children?: React.ReactNode }) => {
   const isAuthenticated = !!localStorage.getItem('token');
-  return isAuthenticated ? <Layout>{children}</Layout> : <Navigate to="/login" />;
+  return isAuthenticated ? <Layout>{children}</Layout> : <Navigate to="/login" replace />;
 };
 
 const App: React.FC = () => {
@@ -23,6 +23,7 @@ const App: React.FC = () => {
     <Router>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<SignUp />} />
         
         {/* Protected Routes */}
         <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
@@ -35,7 +36,7 @@ const App: React.FC = () => {
         <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
 
         {/* Fallback */}
-        <Route path="*" element={<Navigate to="/dashboard" />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Router>
   );

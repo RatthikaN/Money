@@ -43,6 +43,7 @@ export const Layout = ({ children }: { children?: React.ReactNode }) => {
   const [userRole, setUserRole] = useState<Role | string>('');
   const [userName, setUserName] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const role = localStorage.getItem('userRole') || 'Admin';

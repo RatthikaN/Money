@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../services/api';
 
 export const Login: React.FC = () => {
@@ -18,7 +18,7 @@ export const Login: React.FC = () => {
     try {
       const response = await api.auth.login(email, password);
       
-      // CRITICAL FIX: Save the actual token from the backend
+      // Save the actual token from the backend
       localStorage.setItem('token', response.token);
       
       localStorage.setItem('userRole', response.user.role);
@@ -89,6 +89,15 @@ export const Login: React.FC = () => {
             {loading ? 'Signing In...' : 'Sign In'}
           </button>
         </form>
+
+        <div className="mt-6 text-center">
+          <p className="text-sm text-gray-600">
+            Don't have an account?{' '}
+            <Link to="/signup" className="text-blue-600 font-medium hover:underline">
+              Sign Up
+            </Link>
+          </p>
+        </div>
         
         <div className="mt-8 pt-6 border-t border-gray-100">
           <p className="text-xs font-semibold text-gray-500 mb-3 text-center">LOGIN AS:</p>

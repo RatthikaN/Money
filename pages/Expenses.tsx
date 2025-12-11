@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Filter, Search, Eye, Edit2, Trash2, X } from 'lucide-react';
+import { Plus, Filter, Search, Eye, Edit2, Trash2, X, Upload, Sparkles, Loader2 } from 'lucide-react';
 import { Modal } from '../components/Modal';
-import { api } from '../services/api';
+import { api, getCurrencySymbol } from '../services/api';
 import { Expense } from '../types';
 import { AiAssistant } from '../components/AiAssistant';
-import { getCurrencySymbol } from '../services/api';
+import { aiService } from '../services/aiService';
 
 export const Expenses: React.FC = () => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -13,10 +13,14 @@ export const Expenses: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('All');
   const currency = getCurrencySymbol();
   
-  // State for Edit/View/Add
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isViewMode, setIsViewMode] = useState(false);
   const [formData, setFormData] = useState<Partial<Expense>>({});
+
+  // AI Upload State
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
     loadExpenses();
@@ -31,6 +35,8 @@ export const Expenses: React.FC = () => {
     setEditingId(null);
     setIsViewMode(false);
     setFormData({});
+    setPreviewUrl(null);
+    setUploadError('');
     setIsModalOpen(true);
   };
 
@@ -38,6 +44,8 @@ export const Expenses: React.FC = () => {
     setEditingId(expense.id);
     setIsViewMode(false);
     setFormData({ ...expense });
+    setPreviewUrl(null);
+    setUploadError('');
     setIsModalOpen(true);
   };
 
@@ -45,6 +53,8 @@ export const Expenses: React.FC = () => {
     setEditingId(expense.id);
     setIsViewMode(true);
     setFormData({ ...expense });
+    setPreviewUrl(null);
+    setUploadError('');
     setIsModalOpen(true);
   };
 
@@ -53,8 +63,59 @@ export const Expenses: React.FC = () => {
     e.stopPropagation();
     if (window.confirm("Are you sure you want to delete this expense?")) {
       await api.expenses.delete(id);
-      setExpenses(prev => prev.filter(e => e.id !== id));
+      loadExpenses(); // Force Refresh
     }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadError('');
+    setPreviewUrl(null);
+
+    // 1. Size Validation
+    const minSize = 10 * 1024; // 10KB
+    const maxSize = 4 * 1024 * 1024; // 4MB
+
+    if (file.size < minSize) {
+      setUploadError('File is too small. Please upload a clear image (Min 10KB).');
+      return;
+    }
+    if (file.size > maxSize) {
+      setUploadError('File is too large. Max size is 4MB.');
+      return;
+    }
+
+    // 2. Preview
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64String = reader.result as string;
+      setPreviewUrl(base64String);
+      
+      // 3. AI Processing
+      setIsAnalyzing(true);
+      try {
+        const base64Data = base64String.split(',')[1];
+        const extracted = await aiService.extractInvoiceDetails(base64Data, file.type);
+        
+        if (extracted) {
+          setFormData(prev => ({
+            ...prev,
+            date: extracted.date || prev.date,
+            shop: extracted.client || prev.shop, // Map Client Name to Shop/Vendor
+            name: extracted.paymentType || prev.name || 'Expense Entry',
+            product: extracted.paymentType || prev.product,
+            actualAmount: extracted.amount ? Number(extracted.amount) : prev.actualAmount,
+          }));
+        }
+      } catch (err) {
+        setUploadError('Failed to extract data. Please enter manually.');
+      } finally {
+        setIsAnalyzing(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -62,16 +123,18 @@ export const Expenses: React.FC = () => {
     if (isViewMode) return;
 
     if (formData.name) {
-      if (editingId) {
-        // Update
-        await api.expenses.update(editingId, formData);
-      } else {
-        // Create
-        await api.expenses.create(formData as any);
+      try {
+        if (editingId) {
+            await api.expenses.update(editingId, formData);
+        } else {
+            await api.expenses.create(formData as any);
+        }
+        setIsModalOpen(false);
+        setFormData({});
+        loadExpenses(); // Refresh from DB to get correct data
+      } catch (e) {
+        alert("Failed to save expense.");
       }
-      setIsModalOpen(false);
-      setFormData({});
-      loadExpenses(); // Refresh from DB to get correct data
     }
   };
 
@@ -80,7 +143,6 @@ export const Expenses: React.FC = () => {
     (exp.name.toLowerCase().includes(searchTerm.toLowerCase()) || exp.shop.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  // Explicit Number casting for totals
   const totalActual = filteredExpenses.reduce((sum, e) => sum + Number(e.actualAmount || 0), 0);
   const totalPaid = filteredExpenses.reduce((sum, e) => sum + Number(e.paidAmount || 0), 0);
   const totalDue = filteredExpenses.reduce((sum, e) => sum + Number(e.dueAmount || 0), 0);
@@ -100,7 +162,6 @@ export const Expenses: React.FC = () => {
         </button>
       </div>
 
-      {/* Summary Bar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-lg border border-gray-100 shadow-sm">
           <p className="text-xs text-gray-500 uppercase tracking-wider">Total Actual</p>
@@ -120,7 +181,6 @@ export const Expenses: React.FC = () => {
         </div>
       </div>
 
-      {/* Filters */}
       <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 items-center">
         <div className="relative flex-1 w-full">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={20} />
@@ -148,7 +208,6 @@ export const Expenses: React.FC = () => {
         </div>
       </div>
 
-      {/* Table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
@@ -186,30 +245,9 @@ export const Expenses: React.FC = () => {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex justify-center space-x-2">
-                      <button 
-                        type="button"
-                        onClick={() => handleView(exp)} 
-                        className="p-1 text-gray-400 hover:text-blue-600 transition-colors" 
-                        title="View"
-                      >
-                        <Eye size={18} />
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => handleEdit(exp)} 
-                        className="p-1 text-gray-400 hover:text-green-600 transition-colors"
-                        title="Edit"
-                      >
-                        <Edit2 size={18} />
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={(e) => handleDelete(e, exp.id)} 
-                        className="p-1 text-gray-400 hover:text-red-600 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      <button type="button" onClick={() => handleView(exp)} className="p-1 text-gray-400 hover:text-blue-600"><Eye size={18} /></button>
+                      <button type="button" onClick={() => handleEdit(exp)} className="p-1 text-gray-400 hover:text-green-600"><Edit2 size={18} /></button>
+                      <button type="button" onClick={(e) => handleDelete(e, exp.id)} className="p-1 text-gray-400 hover:text-red-600"><Trash2 size={18} /></button>
                     </div>
                   </td>
                 </tr>
@@ -217,13 +255,51 @@ export const Expenses: React.FC = () => {
             </tbody>
           </table>
         </div>
-        {filteredExpenses.length === 0 && (
-          <div className="p-8 text-center text-gray-400">No expenses found matching your filters.</div>
-        )}
       </div>
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle}>
         <form onSubmit={handleSave} className="space-y-4">
+          
+          {/* AI Auto-fill Section */}
+          {!isViewMode && (
+            <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-4">
+                <label className="block text-sm font-medium text-indigo-900 mb-2">
+                  <span className="flex items-center gap-2"><Sparkles size={16} /> Auto-fill with AI</span>
+                </label>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                  <label className="cursor-pointer flex items-center justify-center sm:justify-start space-x-2 bg-white border border-indigo-200 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors w-full sm:w-auto">
+                    <Upload size={16} />
+                    <span>Upload Bill/Invoice</span>
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={handleFileUpload}
+                    />
+                  </label>
+                  <span className="text-xs text-gray-500 text-center sm:text-left">Max 4MB. Min 10KB.</span>
+                </div>
+                
+                {uploadError && <p className="text-xs text-red-600 mt-2">{uploadError}</p>}
+                
+                {isAnalyzing && (
+                  <div className="mt-3 flex items-center text-sm text-indigo-700">
+                    <Loader2 className="animate-spin mr-2" size={16} />
+                    Reading invoice details...
+                  </div>
+                )}
+
+                {previewUrl && !isAnalyzing && (
+                  <div className="mt-3 relative w-full h-32 bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
+                     <img src={previewUrl} alt="Preview" className="w-full h-full object-contain" />
+                     <div className="absolute bottom-2 right-2 bg-black bg-opacity-60 text-white text-xs px-2 py-1 rounded">
+                        Details Extracted
+                     </div>
+                  </div>
+                )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
@@ -331,8 +407,6 @@ export const Expenses: React.FC = () => {
           </div>
         </form>
       </Modal>
-
-      {/* AI Assistant for Expenses */}
       <AiAssistant data={filteredExpenses} type="Expenses" />
     </div>
   );

@@ -54,6 +54,8 @@ export interface DashboardMetrics {
   totalDue: number;
   totalExpenses: number;
   netCashFlow: number;
+  totalOnline: number;
+  chartData?: { name: string; income: number; expense: number }[];
 }
 
 export interface GeneralSettings {

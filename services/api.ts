@@ -1,4 +1,3 @@
-
 import { DashboardMetrics, Expense, IncomingPayment, RecurringItem, User, GeneralSettings, SmtpSettings, BusinessSettings, SocialSettings, PersonalSettings } from '../types';
 
 const API_URL = "http://localhost:5000/api";
@@ -9,6 +8,22 @@ const getAuthHeader = () => {
   return token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
 };
 
+// Global Error Handler for 401 (Unauthorized)
+const handleResponse = async (res: Response) => {
+  if (res.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('userRole');
+    localStorage.removeItem('userName');
+    window.location.href = '/#/login'; // Force redirect
+    throw new Error('Session expired. Please login again.');
+  }
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.message || 'Request failed');
+  }
+  return res.json();
+};
+
 // Default Settings
 const defaultGeneral: GeneralSettings = { companyName: 'MoneyFlow Inc.', email: 'admin@moneyflow.com', currency: 'USD', timezone: 'UTC', dateFormat: 'YYYY-MM-DD' };
 const defaultSmtp: SmtpSettings = { host: 'smtp.gmail.com', port: 587, username: 'mailer@moneyflow.com', fromEmail: 'no-reply@moneyflow.com', enableSsl: true };
@@ -17,8 +32,6 @@ const defaultSocial: SocialSettings = { facebook: 'https://fb.com/moneyflow', tw
 const defaultPersonal: PersonalSettings = { name: 'Demo Admin', email: 'demo@demo.com', twoFactorEnabled: false };
 
 export const getCurrencySymbol = () => {
-  // We keep a cached copy in localStorage for UI performance (synchronous access)
-  // The actual source of truth is the DB, which updates this cache.
   try {
       const stored = localStorage.getItem('moneyflow_cached_currency');
       const currencyCode = stored || 'USD';
@@ -36,9 +49,9 @@ export const getCurrencySymbol = () => {
 const fetchSetting = async <T>(section: string, defaultData: T): Promise<T> => {
     try {
         const res = await fetch(`${API_URL}/settings/${section.toLowerCase()}`, { headers: getAuthHeader() });
+        if (res.status === 401) return defaultData; // Handle silently for settings
         if (!res.ok) return defaultData;
         const data = await res.json();
-        // If empty object returned (not configured yet), use default
         return Object.keys(data).length > 0 ? data : defaultData;
     } catch (e) {
         console.error(`Failed to fetch ${section} settings`, e);
@@ -52,8 +65,7 @@ const saveSetting = async (section: string, data: any) => {
         headers: getAuthHeader(),
         body: JSON.stringify(data)
     });
-    if (!res.ok) throw new Error('Failed to save settings');
-    return res.json();
+    return handleResponse(res);
 };
 
 export const api = {
@@ -70,18 +82,36 @@ export const api = {
       }
       return res.json();
     },
+    register: async (data: any) => {
+      const res = await fetch(`${API_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Registration failed');
+      }
+      return res.json();
+    }
   },
   dashboard: {
-    getStats: async (): Promise<DashboardMetrics> => {
-      const res = await fetch(`${API_URL}/dashboard/stats`, { headers: getAuthHeader() });
-      if (!res.ok) throw new Error('Failed to fetch stats');
-      const data = await res.json();
+    getStats: async (month?: number, year?: number): Promise<DashboardMetrics> => {
+      // Build Query String
+      const params = new URLSearchParams();
+      if (month) params.append('month', month.toString());
+      if (year) params.append('year', year.toString());
+
+      const res = await fetch(`${API_URL}/dashboard/stats?${params.toString()}`, { headers: getAuthHeader() });
+      const data = await handleResponse(res);
       return {
         totalIncoming: Number(data.totalIncoming || 0),
         totalReceived: Number(data.totalReceived || 0),
         totalDue: Number(data.totalIncomingDue || 0),
         totalExpenses: Number(data.totalExpenses || 0),
         netCashFlow: Number(data.netCashFlow || 0),
+        totalOnline: Number(data.totalOnline || 0),
+        chartData: data.chartData || []
       };
     }
   },
@@ -97,8 +127,7 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to create expense');
-      return res.json();
+      return handleResponse(res);
     },
     update: async (id: string, data: Partial<Expense>) => {
       const res = await fetch(`${API_URL}/expenses/${id}`, {
@@ -106,16 +135,14 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to update expense');
-      return res.json();
+      return handleResponse(res);
     },
     delete: async (id: string) => {
       const res = await fetch(`${API_URL}/expenses/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader(),
       });
-      if (!res.ok) throw new Error('Failed to delete expense');
-      return true;
+      return handleResponse(res);
     },
   },
   incoming: {
@@ -130,8 +157,7 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to create incoming payment');
-      return res.json();
+      return handleResponse(res);
     },
     update: async (id: string, data: Partial<IncomingPayment>) => {
       const res = await fetch(`${API_URL}/incoming/${id}`, {
@@ -139,16 +165,14 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to update incoming payment');
-      return res.json();
+      return handleResponse(res);
     },
     delete: async (id: string) => {
       const res = await fetch(`${API_URL}/incoming/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader(),
       });
-      if (!res.ok) throw new Error('Failed to delete incoming payment');
-      return true;
+      return handleResponse(res);
     },
   },
   recurring: {
@@ -163,8 +187,7 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to create recurring item');
-      return res.json();
+      return handleResponse(res);
     },
     update: async (id: string, data: Partial<RecurringItem>) => {
       const res = await fetch(`${API_URL}/recurring/${id}`, {
@@ -172,16 +195,14 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to update recurring item');
-      return res.json();
+      return handleResponse(res);
     },
     delete: async (id: string) => {
       const res = await fetch(`${API_URL}/recurring/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader(),
       });
-      if (!res.ok) throw new Error('Failed to delete recurring item');
-      return true;
+      return handleResponse(res);
     },
   },
   users: {
@@ -196,8 +217,7 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to create user');
-      return res.json();
+      return handleResponse(res);
     },
     update: async (id: string, data: Partial<User>) => {
       const res = await fetch(`${API_URL}/users/${id}`, {
@@ -205,16 +225,14 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to update user');
-      return res.json();
+      return handleResponse(res);
     },
     delete: async (id: string) => {
       const res = await fetch(`${API_URL}/users/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader(),
       });
-      if (!res.ok) throw new Error('Failed to delete user');
-      return true;
+      return handleResponse(res);
     },
   },
   clients: {
@@ -230,8 +248,7 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify({ ...data, role: 'Client', password: 'clientDefault123' }),
       });
-      if (!res.ok) throw new Error('Failed to create client');
-      return res.json();
+      return handleResponse(res);
     },
     update: async (id: string, data: Partial<User>) => {
       const res = await fetch(`${API_URL}/users/${id}`, {
@@ -239,16 +256,14 @@ export const api = {
         headers: getAuthHeader(),
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error('Failed to update client');
-      return res.json();
+      return handleResponse(res);
     },
     delete: async (id: string) => {
       const res = await fetch(`${API_URL}/users/${id}`, {
         method: 'DELETE',
         headers: getAuthHeader(),
       });
-      if (!res.ok) throw new Error('Failed to delete client');
-      return true;
+      return handleResponse(res);
     }
   },
   settings: {
@@ -272,7 +287,6 @@ export const api = {
       return true;
     },
     toggle2FA: async (enable: boolean) => {
-      // First get current
       const personal = await fetchSetting('personal', defaultPersonal);
       personal.twoFactorEnabled = enable;
       await saveSetting('personal', personal);
