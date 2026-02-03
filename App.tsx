@@ -1,5 +1,9 @@
+
 import React from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import * as ReactRouterDOM from 'react-router-dom';
+const { HashRouter, Routes, Route, Navigate } = ReactRouterDOM as any;
+const Router = HashRouter;
+
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
 import { SignUp } from './pages/SignUp';
@@ -11,6 +15,7 @@ import { Reports } from './pages/Reports';
 import { Users } from './pages/Users';
 import { Settings } from './pages/Settings';
 import { Clients } from './pages/Clients';
+// import { BudgetPage } from './pages/Budget';
 
 // Private Route Wrapper
 const PrivateRoute = ({ children }: { children?: React.ReactNode }) => {
@@ -34,6 +39,8 @@ const App: React.FC = () => {
         <Route path="/clients" element={<PrivateRoute><Clients /></PrivateRoute>} />
         <Route path="/users" element={<PrivateRoute><Users /></PrivateRoute>} />
         <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
+        {/* Fix: Adding route for Spending Budgets */}
+        {/* <Route path="/budgets" element={<PrivateRoute><BudgetPage /></PrivateRoute>} /> */}
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

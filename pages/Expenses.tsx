@@ -1,29 +1,49 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Filter, Search, Eye, Edit2, Trash2, X, Upload, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, Search, Eye, Edit2, Trash2, X, Upload, Paperclip, FileText, Sparkles, Loader2, Key, AlertTriangle } from 'lucide-react';
 import { Modal } from '../components/Modal';
-import { api, getCurrencySymbol } from '../services/api';
-import { Expense } from '../types';
-import { AiAssistant } from '../components/AiAssistant';
+import { api, useCurrency, compressImage } from '../services/api';
+import { Expense, ExpenseItem, Attachment } from '../types';
 import { aiService } from '../services/aiService';
+
+const sanitizeAmount = (val: any): number => {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const cleaned = String(val).replace(/[^0-9.]/g, '');
+  return parseFloat(cleaned) || 0;
+};
+
+const normalizeDate = (dateStr: string | null): string => {
+  if (!dateStr) return new Date().toISOString().split('T')[0];
+  try {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    const ddmmyyyy = dateStr.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (ddmmyyyy) {
+      const [_, d, m, y] = ddmmyyyy;
+      return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    }
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+  } catch (e) {
+    console.error("Date normalization failed for:", dateStr);
+  }
+  return new Date().toISOString().split('T')[0];
+};
 
 export const Expenses: React.FC = () => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
-  const currency = getCurrencySymbol();
-  
+  const currency = useCurrency();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isViewMode, setIsViewMode] = useState(false);
   const [formData, setFormData] = useState<Partial<Expense>>({});
-
-  // AI Upload State
+  const [items, setItems] = useState<ExpenseItem[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [uploadError, setUploadError] = useState('');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadExpenses();
+  useEffect(() => { 
+    loadExpenses(); 
   }, []);
 
   const loadExpenses = async () => {
@@ -34,9 +54,9 @@ export const Expenses: React.FC = () => {
   const handleAddNew = () => {
     setEditingId(null);
     setIsViewMode(false);
-    setFormData({});
-    setPreviewUrl(null);
-    setUploadError('');
+    setFormData({ date: new Date().toISOString().split('T')[0], status: 'Pending' });
+    setItems([{ product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }]); 
+    setAttachments([]);
     setIsModalOpen(true);
   };
 
@@ -44,8 +64,8 @@ export const Expenses: React.FC = () => {
     setEditingId(expense.id);
     setIsViewMode(false);
     setFormData({ ...expense });
-    setPreviewUrl(null);
-    setUploadError('');
+    setItems(expense.items && expense.items.length > 0 ? expense.items : [{ product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }]);
+    setAttachments(expense.attachments ? expense.attachments.map(att => typeof att === 'string' ? { name: att, data: '', type: 'file' } : att) : []);
     setIsModalOpen(true);
   };
 
@@ -53,88 +73,129 @@ export const Expenses: React.FC = () => {
     setEditingId(expense.id);
     setIsViewMode(true);
     setFormData({ ...expense });
-    setPreviewUrl(null);
-    setUploadError('');
+    setItems(expense.items && expense.items.length > 0 ? expense.items : []);
+    setAttachments(expense.attachments ? expense.attachments.map(att => typeof att === 'string' ? { name: att, data: '', type: 'file' } : att) : []);
     setIsModalOpen(true);
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (window.confirm("Are you sure you want to delete this expense?")) {
-      await api.expenses.delete(id);
-      loadExpenses(); // Force Refresh
-    }
+    e.preventDefault(); e.stopPropagation();
+    if (window.confirm("Delete this expense?")) { await api.expenses.delete(id); loadExpenses(); }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleItemChange = (index: number, field: keyof ExpenseItem, value: any) => {
+    const newItems = [...items];
+    const item = { ...newItems[index] };
+    (item as any)[field] = value;
+    const amount = sanitizeAmount(item.amount);
+    const tax = sanitizeAmount(item.tax);
+    const paid = sanitizeAmount(item.paid);
+    const taxAmount = (amount * tax) / 100;
+    item.subtotal = amount + taxAmount;
+    item.due = item.subtotal - paid;
+    newItems[index] = item;
+    setItems(newItems);
+    calculateGlobalTotals(newItems);
+  };
 
-    setUploadError('');
-    setPreviewUrl(null);
+  const calculateGlobalTotals = (currentItems: ExpenseItem[]) => {
+    const totalActual = currentItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+    const totalPaid = currentItems.reduce((sum, item) => sum + (item.paid || 0), 0);
+    setFormData(prev => ({ ...prev, actualAmount: totalActual, paidAmount: totalPaid, dueAmount: totalActual - totalPaid }));
+  };
 
-    // 1. Size Validation
-    const minSize = 10 * 1024; // 10KB
-    const maxSize = 4 * 1024 * 1024; // 4MB
-
-    if (file.size < minSize) {
-      setUploadError('File is too small. Please upload a clear image (Min 10KB).');
-      return;
-    }
-    if (file.size > maxSize) {
-      setUploadError('File is too large. Max size is 4MB.');
-      return;
-    }
-
-    // 2. Preview
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64String = reader.result as string;
-      setPreviewUrl(base64String);
-      
-      // 3. AI Processing
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const filesArray = Array.from(e.target.files) as File[];
+      const newAttachments: Attachment[] = [];
+      let candidateForAnalysis: Attachment | null = null;
       setIsAnalyzing(true);
       try {
-        const base64Data = base64String.split(',')[1];
-        const extracted = await aiService.extractInvoiceDetails(base64Data, file.type);
-        
-        if (extracted) {
-          setFormData(prev => ({
-            ...prev,
-            date: extracted.date || prev.date,
-            shop: extracted.client || prev.shop, // Map Client Name to Shop/Vendor
-            name: extracted.paymentType || prev.name || 'Expense Entry',
-            product: extracted.paymentType || prev.product,
-            actualAmount: extracted.amount ? Number(extracted.amount) : prev.actualAmount,
-          }));
+        for (const file of filesArray) {
+          if (file.size > 20 * 1024 * 1024) {
+            alert(`File ${file.name} is too large. Max size per file is 20MB.`);
+            continue;
+          }
+          const base64Data = await compressImage(file);
+          const attachment: Attachment = { name: file.name, data: base64Data, type: file.type };
+          newAttachments.push(attachment);
+          if (!candidateForAnalysis && (file.type.startsWith('image/') || file.type === 'application/pdf')) {
+            candidateForAnalysis = attachment;
+          }
         }
-      } catch (err) {
-        setUploadError('Failed to extract data. Please enter manually.');
+        
+        const combined = [...attachments, ...newAttachments];
+        const totalSize = combined.reduce((sum, a) => sum + a.data.length, 0);
+        if (totalSize > 80 * 1024 * 1024) {
+           alert("Total attachment size is too large. Please remove some files.");
+           setIsAnalyzing(false);
+           return;
+        }
+
+        setAttachments(combined);
+        if (candidateForAnalysis) {
+          const rawBase64Data = candidateForAnalysis.data.split(',')[1];
+          const extracted = await aiService.extractInvoiceDetails(rawBase64Data, candidateForAnalysis.type);
+          if (extracted) {
+            const normalizedDate = normalizeDate(extracted.date);
+            const shopName = extracted.shop || 'Vendor';
+            const expenseName = extracted.shop ? `${extracted.shop} Purchase` : 'AI Extracted Expense';
+            let aiItems: ExpenseItem[] = [];
+            if (extracted.items && extracted.items.length > 0) {
+              aiItems = extracted.items.map((i: any) => ({
+                product: i.product || 'Item',
+                amount: sanitizeAmount(i.amount),
+                tax: 0,
+                subtotal: sanitizeAmount(i.amount),
+                paid: 0,
+                due: sanitizeAmount(i.amount)
+              }));
+            } else if (extracted.totalAmount) {
+              aiItems = [{
+                product: 'Grand Total (Extracted)',
+                amount: sanitizeAmount(extracted.totalAmount),
+                tax: 0,
+                subtotal: sanitizeAmount(extracted.totalAmount),
+                paid: 0,
+                due: sanitizeAmount(extracted.totalAmount)
+              }];
+            }
+            const finalItems = aiItems.length > 0 ? aiItems : [{ product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }];
+            setItems(finalItems);
+            const totalActual = finalItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+            setFormData(prev => ({
+              ...prev,
+              shop: shopName,
+              date: normalizedDate,
+              name: expenseName,
+              actualAmount: totalActual,
+              paidAmount: 0,
+              dueAmount: totalActual,
+              status: 'Pending'
+            }));
+          }
+        }
+      } catch (err: any) {
+        console.error("Extraction error:", err);
       } finally {
         setIsAnalyzing(false);
+        if (e.target) e.target.value = ''; 
       }
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isViewMode) return;
-
-    if (formData.name) {
+    const totalActual = items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+    const totalPaid = items.reduce((sum, item) => sum + (item.paid || 0), 0);
+    const payload = { ...formData, actualAmount: totalActual, paidAmount: totalPaid, dueAmount: totalActual - totalPaid, items, attachments };
+    if (payload.name) {
       try {
-        if (editingId) {
-            await api.expenses.update(editingId, formData);
-        } else {
-            await api.expenses.create(formData as any);
-        }
-        setIsModalOpen(false);
-        setFormData({});
-        loadExpenses(); // Refresh from DB to get correct data
-      } catch (e) {
-        alert("Failed to save expense.");
-      }
+        if (editingId) { await api.expenses.update(editingId, payload); }
+        else { await api.expenses.create(payload as any); }
+        setIsModalOpen(false); loadExpenses();
+      } catch (e: any) { alert(e.message); }
     }
   };
 
@@ -143,80 +204,45 @@ export const Expenses: React.FC = () => {
     (exp.name.toLowerCase().includes(searchTerm.toLowerCase()) || exp.shop.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const totalActual = filteredExpenses.reduce((sum, e) => sum + Number(e.actualAmount || 0), 0);
-  const totalPaid = filteredExpenses.reduce((sum, e) => sum + Number(e.paidAmount || 0), 0);
-  const totalDue = filteredExpenses.reduce((sum, e) => sum + Number(e.dueAmount || 0), 0);
-
-  const modalTitle = isViewMode ? "View Expense" : editingId ? "Edit Expense" : "Add New Expense";
-
   return (
     <div className="space-y-6 relative min-h-[calc(100vh-100px)]">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-2xl font-bold text-gray-900">Expenses</h1>
-        <button 
-          onClick={handleAddNew}
-          className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-        >
-          <Plus size={20} />
-          <span>Add Expense</span>
-        </button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={handleAddNew} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors font-bold shadow-lg shadow-blue-100">
+            <Plus size={20} />
+            <span>Add Expense</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-lg border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wider">Total Actual</p>
-          <p className="text-xl font-bold text-gray-800">{currency}{totalActual.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">Total Actual</p>
+          <p className="text-lg md:text-xl font-bold text-gray-800 truncate">{currency}{filteredExpenses.reduce((sum, e) => sum + Number(e.actualAmount || 0), 0).toLocaleString()}</p>
         </div>
         <div className="bg-white p-4 rounded-lg border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wider">Total Paid</p>
-          <p className="text-xl font-bold text-green-600">{currency}{totalPaid.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">Total Paid</p>
+          <p className="text-lg md:text-xl font-bold text-green-600 truncate">{currency}{filteredExpenses.reduce((sum, e) => sum + Number(e.paidAmount || 0), 0).toLocaleString()}</p>
         </div>
         <div className="bg-white p-4 rounded-lg border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wider">Total Due</p>
-          <p className="text-xl font-bold text-red-600">{currency}{totalDue.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">Total Due</p>
+          <p className="text-lg md:text-xl font-bold text-red-600 truncate">{currency}{filteredExpenses.reduce((sum, e) => sum + Number(e.dueAmount || 0), 0).toLocaleString()}</p>
         </div>
         <div className="bg-white p-4 rounded-lg border border-gray-100 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wider">Records</p>
-          <p className="text-xl font-bold text-blue-600">{filteredExpenses.length}</p>
-        </div>
-      </div>
-
-      <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 items-center">
-        <div className="relative flex-1 w-full">
-          <Search className="absolute left-3 top-2.5 text-gray-400" size={20} />
-          <input 
-            type="text" 
-            placeholder="Search by name or shop..." 
-            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
-          <select 
-            className="px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="All">All Status</option>
-            <option value="Paid">Paid</option>
-            <option value="Pending">Pending</option>
-            <option value="Partial">Partial</option>
-            <option value="Overdue">Overdue</option>
-          </select>
-          <input type="date" className="px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">Records</p>
+          <p className="text-lg md:text-xl font-bold text-blue-600 truncate">{filteredExpenses.length}</p>
         </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-gray-50 text-gray-500 font-medium">
+            <thead className="bg-gray-50 text-gray-500 font-bold uppercase text-[10px]">
               <tr>
                 <th className="px-6 py-4">Date</th>
                 <th className="px-6 py-4">Name</th>
                 <th className="px-6 py-4">Shop</th>
-                <th className="px-6 py-4">Product</th>
                 <th className="px-6 py-4 text-right">Actual</th>
                 <th className="px-6 py-4 text-right">Paid</th>
                 <th className="px-6 py-4 text-right">Due</th>
@@ -226,29 +252,23 @@ export const Expenses: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredExpenses.map((exp) => (
-                <tr key={exp.id} className="hover:bg-gray-50">
+                <tr key={exp.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap text-gray-500">{exp.date}</td>
-                  <td className="px-6 py-4 font-medium text-gray-900">{exp.name}</td>
-                  <td className="px-6 py-4 text-gray-600">{exp.shop}</td>
-                  <td className="px-6 py-4 text-gray-600">{exp.product}</td>
-                  <td className="px-6 py-4 text-right font-medium">{currency}{Number(exp.actualAmount || 0).toLocaleString()}</td>
-                  <td className="px-6 py-4 text-right text-green-600">{currency}{Number(exp.paidAmount || 0).toLocaleString()}</td>
-                  <td className="px-6 py-4 text-right text-red-600">{currency}{Number(exp.dueAmount || 0).toLocaleString()}</td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                  <td className="px-6 py-4 font-bold text-gray-900 whitespace-nowrap">{exp.name}</td>
+                  <td className="px-6 py-4 text-gray-600 whitespace-nowrap">{exp.shop}</td>
+                  <td className="px-6 py-4 text-right font-medium whitespace-nowrap">{currency}{Number(exp.actualAmount || 0).toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right text-green-600 font-bold whitespace-nowrap">{currency}{Number(exp.paidAmount || 0).toLocaleString()}</td>
+                  <td className="px-6 py-4 text-right text-red-600 font-bold whitespace-nowrap">{currency}{Number(exp.dueAmount || 0).toLocaleString()}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
                       exp.status === 'Paid' ? 'bg-green-100 text-green-700' :
-                      exp.status === 'Overdue' ? 'bg-red-100 text-red-700' :
-                      'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      {exp.status}
-                    </span>
+                      exp.status === 'Overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                    }`}>{exp.status}</span>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex justify-center space-x-2">
-                      <button type="button" onClick={() => handleView(exp)} className="p-1 text-gray-400 hover:text-blue-600"><Eye size={18} /></button>
-                      <button type="button" onClick={() => handleEdit(exp)} className="p-1 text-gray-400 hover:text-green-600"><Edit2 size={18} /></button>
-                      <button type="button" onClick={(e) => handleDelete(e, exp.id)} className="p-1 text-gray-400 hover:text-red-600"><Trash2 size={18} /></button>
-                    </div>
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
+                    <button onClick={() => handleView(exp)} className="p-1 text-gray-400 hover:text-indigo-600"><Eye size={18} /></button>
+                    <button onClick={() => handleEdit(exp)} className="p-1 text-gray-400 hover:text-green-600"><Edit2 size={18} /></button>
+                    <button onClick={(e) => handleDelete(e, exp.id)} className="p-1 text-gray-400 hover:text-red-600"><Trash2 size={18} /></button>
                   </td>
                 </tr>
               ))}
@@ -257,157 +277,99 @@ export const Expenses: React.FC = () => {
         </div>
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle}>
-        <form onSubmit={handleSave} className="space-y-4">
-          
-          {/* AI Auto-fill Section */}
-          {!isViewMode && (
-            <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-4">
-                <label className="block text-sm font-medium text-indigo-900 mb-2">
-                  <span className="flex items-center gap-2"><Sparkles size={16} /> Auto-fill with AI</span>
-                </label>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <label className="cursor-pointer flex items-center justify-center sm:justify-start space-x-2 bg-white border border-indigo-200 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-colors w-full sm:w-auto">
-                    <Upload size={16} />
-                    <span>Upload Bill/Invoice</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      className="hidden" 
-                      onChange={handleFileUpload}
-                    />
-                  </label>
-                  <span className="text-xs text-gray-500 text-center sm:text-left">Max 4MB. Min 10KB.</span>
-                </div>
-                
-                {uploadError && <p className="text-xs text-red-600 mt-2">{uploadError}</p>}
-                
-                {isAnalyzing && (
-                  <div className="mt-3 flex items-center text-sm text-indigo-700">
-                    <Loader2 className="animate-spin mr-2" size={16} />
-                    Reading invoice details...
-                  </div>
-                )}
-
-                {previewUrl && !isAnalyzing && (
-                  <div className="mt-3 relative w-full h-32 bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
-                     <img src={previewUrl} alt="Preview" className="w-full h-full object-contain" />
-                     <div className="absolute bottom-2 right-2 bg-black bg-opacity-60 text-white text-xs px-2 py-1 rounded">
-                        Details Extracted
-                     </div>
-                  </div>
-                )}
-            </div>
-          )}
-
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={isViewMode ? "View Expense" : editingId ? "Modify Expense" : "Record New Expense"}>
+        <form onSubmit={handleSave} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-              <input 
-                required 
-                disabled={isViewMode}
-                type="date" 
-                className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                value={formData.date || ''}
-                onChange={e => setFormData({...formData, date: e.target.value})} 
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-              <select 
-                disabled={isViewMode}
-                className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                value={formData.status || 'Pending'}
-                onChange={e => setFormData({...formData, status: e.target.value as any})}
-              >
-                <option value="Paid">Paid</option>
-                <option value="Pending">Pending</option>
-                <option value="Partial">Partial</option>
-                <option value="Overdue">Overdue</option>
-              </select>
-            </div>
+             <div>
+               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Expense Name</label>
+               <input required disabled={isViewMode} type="text" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+             </div>
+             <div>
+               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Vendor/Shop</label>
+               <input required disabled={isViewMode} type="text" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.shop || ''} onChange={e => setFormData({...formData, shop: e.target.value})} />
+             </div>
+             <div>
+                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Date</label>
+                <input required disabled={isViewMode} type="date" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})} />
+             </div>
+             <div>
+               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Status</label>
+               <select disabled={isViewMode} className="w-full border border-gray-200 rounded-xl p-3 bg-white disabled:bg-gray-50 font-bold" value={formData.status || 'Pending'} onChange={e => setFormData({...formData, status: e.target.value as any})}>
+                  <option value="Paid">Paid</option>
+                  <option value="Pending">Pending</option>
+                  <option value="Partial">Partial</option>
+                  <option value="Overdue">Overdue</option>
+                </select>
+             </div>
           </div>
+
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Expense Name</label>
-            <input 
-              required 
-              disabled={isViewMode}
-              type="text" 
-              placeholder="e.g. Office Supplies" 
-              className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-              value={formData.name || ''}
-              onChange={e => setFormData({...formData, name: e.target.value})} 
-            />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Shop/Vendor</label>
-              <input 
-                required 
-                disabled={isViewMode}
-                type="text" 
-                className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                value={formData.shop || ''}
-                onChange={e => setFormData({...formData, shop: e.target.value})} 
-              />
+            <div className="flex items-center justify-between mb-3">
+                <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Receipts / Attachments</label>
+                {isAnalyzing && (
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={12} className="animate-spin text-indigo-600" />
+                    <span className="text-[10px] font-bold text-indigo-600 animate-pulse flex items-center gap-1"><Sparkles size={12} /> AI Extraction...</span>
+                  </div>
+                )}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Product</label>
-              <input 
-                type="text" 
-                disabled={isViewMode}
-                className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                value={formData.product || ''}
-                onChange={e => setFormData({...formData, product: e.target.value})} 
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Actual ({currency})</label>
-              <input 
-                required 
-                disabled={isViewMode}
-                type="number" 
-                className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                value={formData.actualAmount || ''}
-                onChange={e => setFormData({...formData, actualAmount: Number(e.target.value)})} 
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Paid ({currency})</label>
-              <input 
-                required 
-                disabled={isViewMode}
-                type="number" 
-                className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                value={formData.paidAmount || ''}
-                onChange={e => setFormData({...formData, paidAmount: Number(e.target.value)})} 
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Due ({currency})</label>
-              <input 
-                readOnly 
-                type="number" 
-                className="w-full border rounded-lg p-2 bg-gray-50 text-gray-500" 
-                value={(formData.actualAmount || 0) - (formData.paidAmount || 0)} 
-              />
-            </div>
-          </div>
-          <div className="flex justify-end pt-4 space-x-3">
-            <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">
-              {isViewMode ? 'Close' : 'Cancel'}
-            </button>
             {!isViewMode && (
-              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                {editingId ? 'Update Expense' : 'Save Expense'}
-              </button>
+              <label className={`flex items-center gap-2 px-5 py-2.5 border rounded-xl cursor-pointer transition-all w-full md:w-auto justify-center md:inline-flex mb-3 shadow-sm ${isAnalyzing ? 'bg-indigo-100 border-indigo-200 text-indigo-400 pointer-events-none' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}>
+                {isAnalyzing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                <span className="text-sm font-bold">{isAnalyzing ? 'Analyzing Document...' : 'Upload & Extract Details'}</span>
+                <input type="file" multiple accept="image/*,application/pdf" className="hidden" onChange={handleFileSelect} disabled={isAnalyzing} />
+              </label>
             )}
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((file, idx) => (
+                <div key={idx} className="flex items-center gap-2 bg-gray-100 px-3 py-1.5 rounded-full text-xs font-medium border border-gray-200">
+                  {file.type === 'application/pdf' ? <FileText size={12} className="text-red-500" /> : <Paperclip size={12} className="text-gray-400" />}
+                  <span className="text-gray-700 max-w-[150px] truncate">{file.name}</span>
+                  {!isViewMode && <button type="button" onClick={() => setAttachments(attachments.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500"><X size={12} /></button>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex justify-between items-center mb-3">
+               <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">Itemized Bill</h3>
+               {!isViewMode && <button type="button" onClick={() => setItems([...items, { product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }])} className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:bg-indigo-50 px-2 py-1 rounded-lg"><Plus size={14} /> Add Line</button>}
+            </div>
+            <div className="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
+                  <tr>
+                    <th className="px-3 py-2.5">Product</th>
+                    <th className="px-3 py-2.5 w-24">Amount</th>
+                    <th className="px-3 py-2.5 w-20">Tax %</th>
+                    <th className="px-3 py-2.5 w-24">Subtotal</th>
+                    <th className="px-3 py-2.5 w-24">Paid</th>
+                    {!isViewMode && <th className="px-3 py-2.5 w-10"></th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {items.map((item, index) => (
+                    <tr key={index}>
+                      <td className="px-3 py-2"><input disabled={isViewMode} type="text" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm font-medium" placeholder="Item name" value={item.product} onChange={e => handleItemChange(index, 'product', e.target.value)} /></td>
+                      <td className="px-3 py-2"><input disabled={isViewMode} type="number" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm" value={item.amount} onChange={e => handleItemChange(index, 'amount', e.target.value)} /></td>
+                      <td className="px-3 py-2"><input disabled={isViewMode} type="number" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm" value={item.tax} onChange={e => handleItemChange(index, 'tax', e.target.value)} /></td>
+                      <td className="px-3 py-2 font-bold text-gray-900">{currency}{item.subtotal?.toFixed(2)}</td>
+                      <td className="px-3 py-2"><input disabled={isViewMode} type="number" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm text-green-600 font-bold" value={item.paid} onChange={e => handleItemChange(index, 'paid', e.target.value)} /></td>
+                      {!isViewMode && <td className="px-3 py-2 text-center"><button type="button" onClick={() => setItems(items.filter((_, i) => i !== index))} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button></td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="flex flex-col-reverse sm:flex-row justify-end pt-4 gap-3">
+            <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-2.5 text-gray-500 font-bold hover:bg-gray-100 rounded-xl transition-all">{isViewMode ? 'Dismiss' : 'Cancel'}</button>
+            {!isViewMode && <button type="submit" className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all font-bold shadow-lg shadow-indigo-100">{editingId ? 'Update Record' : 'Commit Expense'}</button>}
           </div>
         </form>
       </Modal>
-      <AiAssistant data={filteredExpenses} type="Expenses" />
     </div>
   );
 };

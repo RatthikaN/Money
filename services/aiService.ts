@@ -1,9 +1,13 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Initialize the client
-// The APIkey must be obtained exclusively from the environment variable process.env.API_KEY.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+/**
+ * Helper to get a fresh instance of the AI client.
+ * Uses the API key provided in the environment or the hardcoded fallback provided by the user.
+ */
+const getAiClient = () => {
+  const apiKey = process.env.API_KEY || 'AIzaSyC2AikaJ4cUrijBPS4sKRMGBG4kT2sstds';
+  return new GoogleGenAI({ apiKey });
+};
 
 // Helper to clean JSON string if model adds markdown
 const cleanJson = (text: string) => {
@@ -13,12 +17,21 @@ const cleanJson = (text: string) => {
 
 export const aiService = {
   /**
-   * Extracts details from an invoice image using Gemini 2.5 Flash.
+   * Simple check to see if AI is ready to use.
+   */
+  hasValidKey: (): boolean => {
+    return !!(process.env.API_KEY || 'AIzaSyC2AikaJ4cUrijBPS4sKRMGBG4kT2sstds');
+  },
+
+  /**
+   * Extracts details from an invoice image using Gemini 3 Flash.
    */
   extractInvoiceDetails: async (base64Image: string, mimeType: string) => {
     try {
+      const ai = getAiClient();
+      
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: {
           parts: [
             {
@@ -28,22 +41,29 @@ export const aiService = {
               }
             },
             {
-              text: "Analyze this image. If it is an invoice or bill, extract: Client/Payer Name, Total Amount, Date, and Invoice Number. If it is not a bill, return null values."
+              text: "Analyze this image. If it is an invoice or bill, extract: Shop/Vendor Name, Total Amount, Date, and itemized products. If it is not a bill, return null values."
             }
           ]
         },
         config: {
           responseMimeType: "application/json",
-          // Disable thinking for faster latency on simple extraction tasks
-          thinkingConfig: { thinkingBudget: 0 },
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              client: { type: Type.STRING, nullable: true },
-              amount: { type: Type.NUMBER, nullable: true },
+              shop: { type: Type.STRING, nullable: true },
+              totalAmount: { type: Type.NUMBER, nullable: true },
               date: { type: Type.STRING, description: "YYYY-MM-DD format", nullable: true },
-              transactionNo: { type: Type.STRING, nullable: true },
-              paymentType: { type: Type.STRING, description: "Brief description of service/product", nullable: true }
+              items: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    product: { type: Type.STRING },
+                    amount: { type: Type.NUMBER }
+                  },
+                  required: ["product", "amount"]
+                }
+              }
             }
           }
         }
@@ -52,7 +72,7 @@ export const aiService = {
       const text = response.text;
       if (!text) return null;
       return JSON.parse(cleanJson(text));
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI Extraction Failed:", error);
       throw error;
     }
@@ -63,8 +83,10 @@ export const aiService = {
    */
   extractBusinessDetails: async (base64Image: string, mimeType: string) => {
     try {
+      const ai = getAiClient();
+      
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: {
           parts: [
             {
@@ -74,13 +96,12 @@ export const aiService = {
               }
             },
             {
-              text: "Analyze this image. It is a GST certificate or business registration document. Extract the Business Name, Complete Address components (City, State, Zip), and GST/Registration Number."
+              text: "Analyze this GST certificate or business registration. Extract the Business Name, Address (City, State, Zip), and GST Number."
             }
           ]
         },
         config: {
           responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -98,8 +119,58 @@ export const aiService = {
       const text = response.text;
       if (!text) return null;
       return JSON.parse(cleanJson(text));
-    } catch (error) {
+    } catch (error: any) {
       console.error("GST Extraction Failed:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Extracts client details from a business card or document.
+   */
+  extractClientDetails: async (base64Image: string, mimeType: string) => {
+    try {
+      const ai = getAiClient();
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64Image
+              }
+            },
+            {
+              text: "Analyze this business card. Extract the Contact Person Name, Company Name, Email, Phone Number, GST Number, and Address details."
+            }
+          ]
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING, description: "Contact person name" },
+              companyName: { type: Type.STRING, description: "Business/Company name" },
+              email: { type: Type.STRING },
+              phoneNumber: { type: Type.STRING },
+              gstNumber: { type: Type.STRING },
+              address: { type: Type.STRING, description: "Street address" },
+              city: { type: Type.STRING },
+              state: { type: Type.STRING },
+              zipCode: { type: Type.STRING }
+            }
+          }
+        }
+      });
+
+      const text = response.text;
+      if (!text) return null;
+      return JSON.parse(cleanJson(text));
+    } catch (error: any) {
+      console.error("Client Extraction Failed:", error);
       throw error;
     }
   },
@@ -109,18 +180,17 @@ export const aiService = {
    */
   generateInsights: async (data: any, context: 'Incoming' | 'Recurring' | 'Reports') => {
     try {
+      const ai = getAiClient();
+      
       const promptMap = {
-        Incoming: "Analyze this list of recent incoming payments. Identify the top client, payment consistency trends, and any cash flow observations. Keep it under 50 words.",
-        Recurring: "Analyze these recurring expenses/income. Calculate the total monthly burn rate vs income. Suggest one optimization. Keep it under 50 words.",
-        Reports: "Act as a financial auditor. Summarize this report data into an executive summary with 3 bullet points highlighting risks and opportunities."
+        Incoming: "Analyze this list of recent incoming payments. Identify trends and top clients. Under 50 words.",
+        Recurring: "Analyze these recurring items. Suggest one optimization. Under 50 words.",
+        Reports: "Summarize this report with 3 key bullet points on financial health."
       };
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: `Context: ${JSON.stringify(data)}. Task: ${promptMap[context]}`,
-        config: {
-          thinkingConfig: { thinkingBudget: 0 }
-        }
       });
 
       return response.text || "No insights generated.";
@@ -135,37 +205,32 @@ export const aiService = {
    */
   chatWithData: async (userMessage: string, data: any, type: string) => {
     try {
-      // Limit context size strictly to avoid token issues
+      const ai = getAiClient();
+      
       const dataContext = JSON.stringify(data).slice(0, 50000); 
 
       const prompt = `
-        You are a smart, helpful financial assistant embedded in a money management app.
-        
-        CONTEXT:
-        The user is currently looking at the "${type}" page.
-        Here is the raw JSON data visible to the user:
+        You are a smart financial assistant.
+        The user is looking at "${type}" data:
         ${dataContext}
 
-        USER QUESTION:
-        "${userMessage}"
+        USER QUESTION: "${userMessage}"
 
         INSTRUCTIONS:
-        1. Answer the user's question based strictly on the provided data.
-        2. If the data doesn't contain the answer, politely say so.
-        3. Perform calculations if asked (e.g., "Total spent on Amazon").
-        4. Keep your answer concise, friendly, and professional.
-        5. Format money with $ or the appropriate currency symbol found in data.
+        1. Answer based strictly on data.
+        2. Format money with symbols found in data.
+        3. Keep answers concise.
       `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: prompt
       });
 
       return response.text || "I'm not sure how to answer that.";
     } catch (error) {
       console.error("AI Chat Error:", error);
-      return "I'm having trouble analyzing your data right now. Please try again later.";
+      return "I'm having trouble analyzing your data right now.";
     }
   }
 };
