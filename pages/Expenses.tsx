@@ -42,20 +42,19 @@ export const Expenses: React.FC = () => {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  useEffect(() => { 
-    loadExpenses(); 
+  useEffect(() => {
+    loadExpenses();
   }, []);
 
   const loadExpenses = async () => {
     const data = await api.expenses.getAll();
     setExpenses(data);
   };
-
   const handleAddNew = () => {
     setEditingId(null);
     setIsViewMode(false);
     setFormData({ date: new Date().toISOString().split('T')[0], status: 'Pending' });
-    setItems([{ product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }]); 
+    setItems([{ product: '', amount: 0, tax: 0, taxType: 'Exclusive', subtotal: 0, paid: 0, due: 0 }]);
     setAttachments([]);
     setIsModalOpen(true);
   };
@@ -64,8 +63,16 @@ export const Expenses: React.FC = () => {
     setEditingId(expense.id);
     setIsViewMode(false);
     setFormData({ ...expense });
-    setItems(expense.items && expense.items.length > 0 ? expense.items : [{ product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }]);
-    setAttachments(expense.attachments ? expense.attachments.map(att => typeof att === 'string' ? { name: att, data: '', type: 'file' } : att) : []);
+    setItems(Array.isArray(expense.items) && expense.items.length > 0 ? expense.items.map(i => ({
+      ...i,
+      amount: Number(i.amount || 0),
+      tax: Number(i.tax || 0),
+      taxType: i.taxType || 'Exclusive',
+      subtotal: Number(i.subtotal || 0),
+      paid: Number(i.paid || 0),
+      due: Number(i.due || 0)
+    })) : [{ product: '', amount: 0, tax: 0, taxType: 'Exclusive', subtotal: 0, paid: 0, due: 0 }]);
+    setAttachments(Array.isArray(expense.attachments) ? expense.attachments.map(att => typeof att === 'string' ? { name: att, data: '', type: 'file' } : att) : []);
     setIsModalOpen(true);
   };
 
@@ -87,11 +94,26 @@ export const Expenses: React.FC = () => {
     const newItems = [...items];
     const item = { ...newItems[index] };
     (item as any)[field] = value;
+
     const amount = sanitizeAmount(item.amount);
-    const tax = sanitizeAmount(item.tax);
+    const taxRate = sanitizeAmount(item.tax);
     const paid = sanitizeAmount(item.paid);
-    const taxAmount = (amount * tax) / 100;
-    item.subtotal = amount + taxAmount;
+
+    // Calculate subtotal and taxAmount based on Tax Type
+    if (item.taxType === 'Inclusive') {
+      // Inclusive: Amount is the final price.
+      // Base = Amount / (1 + Rate)
+      // TaxAmount = Amount - Base
+      const base = amount / (1 + (taxRate / 100));
+      item.taxAmount = amount - base;
+      item.subtotal = amount;
+    } else {
+      // Exclusive: Amount + Tax = Subtotal
+      const taxAmount = (amount * taxRate) / 100;
+      item.taxAmount = taxAmount;
+      item.subtotal = amount + taxAmount;
+    }
+
     item.due = item.subtotal - paid;
     newItems[index] = item;
     setItems(newItems);
@@ -123,13 +145,13 @@ export const Expenses: React.FC = () => {
             candidateForAnalysis = attachment;
           }
         }
-        
+
         const combined = [...attachments, ...newAttachments];
         const totalSize = combined.reduce((sum, a) => sum + a.data.length, 0);
         if (totalSize > 80 * 1024 * 1024) {
-           alert("Total attachment size is too large. Please remove some files.");
-           setIsAnalyzing(false);
-           return;
+          alert("Total attachment size is too large. Please remove some files.");
+          setIsAnalyzing(false);
+          return;
         }
 
         setAttachments(combined);
@@ -140,12 +162,17 @@ export const Expenses: React.FC = () => {
             const normalizedDate = normalizeDate(extracted.date);
             const shopName = extracted.shop || 'Vendor';
             const expenseName = extracted.shop ? `${extracted.shop} Purchase` : 'AI Extracted Expense';
+            // Use extracted description or summary as the Product
+            const productDescription = extracted.summary || extracted.category || 'Extracted Item';
+
             let aiItems: ExpenseItem[] = [];
             if (extracted.items && extracted.items.length > 0) {
               aiItems = extracted.items.map((i: any) => ({
                 product: i.product || 'Item',
                 amount: sanitizeAmount(i.amount),
                 tax: 0,
+                taxType: 'Exclusive',
+                taxAmount: 0,
                 subtotal: sanitizeAmount(i.amount),
                 paid: 0,
                 due: sanitizeAmount(i.amount)
@@ -155,12 +182,14 @@ export const Expenses: React.FC = () => {
                 product: 'Grand Total (Extracted)',
                 amount: sanitizeAmount(extracted.totalAmount),
                 tax: 0,
+                taxType: 'Exclusive',
+                taxAmount: 0,
                 subtotal: sanitizeAmount(extracted.totalAmount),
                 paid: 0,
                 due: sanitizeAmount(extracted.totalAmount)
               }];
             }
-            const finalItems = aiItems.length > 0 ? aiItems : [{ product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }];
+            const finalItems = aiItems.length > 0 ? aiItems : [{ product: '', amount: 0, tax: 0, taxType: 'Exclusive', subtotal: 0, paid: 0, due: 0 }];
             setItems(finalItems);
             const totalActual = finalItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
             setFormData(prev => ({
@@ -168,6 +197,7 @@ export const Expenses: React.FC = () => {
               shop: shopName,
               date: normalizedDate,
               name: expenseName,
+              product: productDescription,
               actualAmount: totalActual,
               paidAmount: 0,
               dueAmount: totalActual,
@@ -179,7 +209,7 @@ export const Expenses: React.FC = () => {
         console.error("Extraction error:", err);
       } finally {
         setIsAnalyzing(false);
-        if (e.target) e.target.value = ''; 
+        if (e.target) e.target.value = '';
       }
     }
   };
@@ -199,7 +229,7 @@ export const Expenses: React.FC = () => {
     }
   };
 
-  const filteredExpenses = expenses.filter(exp => 
+  const filteredExpenses = expenses.filter(exp =>
     (statusFilter === 'All' || exp.status === statusFilter) &&
     (exp.name.toLowerCase().includes(searchTerm.toLowerCase()) || exp.shop.toLowerCase().includes(searchTerm.toLowerCase()))
   );
@@ -260,10 +290,9 @@ export const Expenses: React.FC = () => {
                   <td className="px-6 py-4 text-right text-green-600 font-bold whitespace-nowrap">{currency}{Number(exp.paidAmount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 text-right text-red-600 font-bold whitespace-nowrap">{currency}{Number(exp.dueAmount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                      exp.status === 'Paid' ? 'bg-green-100 text-green-700' :
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${exp.status === 'Paid' ? 'bg-green-100 text-green-700' :
                       exp.status === 'Overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
-                    }`}>{exp.status}</span>
+                      }`}>{exp.status}</span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center">
                     <button onClick={() => handleView(exp)} className="p-1 text-gray-400 hover:text-indigo-600"><Eye size={18} /></button>
@@ -280,38 +309,53 @@ export const Expenses: React.FC = () => {
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={isViewMode ? "View Expense" : editingId ? "Modify Expense" : "Record New Expense"}>
         <form onSubmit={handleSave} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <div>
-               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Expense Name</label>
-               <input required disabled={isViewMode} type="text" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
-             </div>
-             <div>
-               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Vendor/Shop</label>
-               <input required disabled={isViewMode} type="text" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.shop || ''} onChange={e => setFormData({...formData, shop: e.target.value})} />
-             </div>
-             <div>
-                <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Date</label>
-                <input required disabled={isViewMode} type="date" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})} />
-             </div>
-             <div>
-               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Status</label>
-               <select disabled={isViewMode} className="w-full border border-gray-200 rounded-xl p-3 bg-white disabled:bg-gray-50 font-bold" value={formData.status || 'Pending'} onChange={e => setFormData({...formData, status: e.target.value as any})}>
-                  <option value="Paid">Paid</option>
-                  <option value="Pending">Pending</option>
-                  <option value="Partial">Partial</option>
-                  <option value="Overdue">Overdue</option>
-                </select>
-             </div>
+            <div>
+              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Expense Name</label>
+              <input required disabled={isViewMode} type="text" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.name || ''} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Vendor/Shop</label>
+              <input required disabled={isViewMode} type="text" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.shop || ''} onChange={e => setFormData({ ...formData, shop: e.target.value })} />
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Date</label>
+              <input required disabled={isViewMode} type="date" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.date || ''} onChange={e => setFormData({ ...formData, date: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Status</label>
+              <select disabled={isViewMode} className="w-full border border-gray-200 rounded-xl p-3 bg-white disabled:bg-gray-50 font-bold" value={formData.status || 'Pending'} onChange={e => {
+                const newStatus = e.target.value as any;
+                setFormData({ ...formData, status: newStatus });
+
+                // Auto-update items based on status
+                if (newStatus === 'Paid') {
+                  const updatedItems = items.map(item => ({ ...item, paid: item.subtotal }));
+                  setItems(updatedItems);
+                  calculateGlobalTotals(updatedItems);
+                } else if (newStatus === 'Pending') {
+                  const updatedItems = items.map(item => ({ ...item, paid: 0 }));
+                  setItems(updatedItems);
+                  calculateGlobalTotals(updatedItems);
+                }
+              }}>
+                <option value="Paid">Paid</option>
+                <option value="Pending">Pending</option>
+                <option value="Partial">Partial</option>
+                <option value="Overdue">Overdue</option>
+              </select>
+            </div>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-3">
-                <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Receipts / Attachments</label>
-                {isAnalyzing && (
-                  <div className="flex items-center gap-2">
-                    <Loader2 size={12} className="animate-spin text-indigo-600" />
-                    <span className="text-[10px] font-bold text-indigo-600 animate-pulse flex items-center gap-1"><Sparkles size={12} /> AI Extraction...</span>
-                  </div>
-                )}
+              <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Receipts / Attachments</label>
+              {isAnalyzing && (
+                <div className="flex items-center gap-2">
+                  <Loader2 size={12} className="animate-spin text-indigo-600" />
+                  <span className="text-[10px] font-bold text-indigo-600 animate-pulse flex items-center gap-1"><Sparkles size={12} /> AI Extraction...</span>
+                </div>
+              )}
             </div>
             {!isViewMode && (
               <label className={`flex items-center gap-2 px-5 py-2.5 border rounded-xl cursor-pointer transition-all w-full md:w-auto justify-center md:inline-flex mb-3 shadow-sm ${isAnalyzing ? 'bg-indigo-100 border-indigo-200 text-indigo-400 pointer-events-none' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}>
@@ -333,16 +377,18 @@ export const Expenses: React.FC = () => {
 
           <div>
             <div className="flex justify-between items-center mb-3">
-               <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">Itemized Bill</h3>
-               {!isViewMode && <button type="button" onClick={() => setItems([...items, { product: '', amount: 0, tax: 0, subtotal: 0, paid: 0, due: 0 }])} className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:bg-indigo-50 px-2 py-1 rounded-lg"><Plus size={14} /> Add Line</button>}
+              <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">Itemized Bill</h3>
+              {!isViewMode && <button type="button" onClick={() => setItems([...items, { product: '', amount: 0, tax: 0, taxType: 'Exclusive', subtotal: 0, paid: 0, due: 0 }])} className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:bg-indigo-50 px-2 py-1 rounded-lg"><Plus size={14} /> Add Line</button>}
             </div>
             <div className="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
               <table className="w-full text-sm text-left">
                 <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
                   <tr>
                     <th className="px-3 py-2.5">Product</th>
+                    <th className="px-3 py-2.5 w-24">Type</th>
                     <th className="px-3 py-2.5 w-24">Amount</th>
                     <th className="px-3 py-2.5 w-20">Tax %</th>
+                    <th className="px-3 py-2.5 w-24">Tax Amt</th>
                     <th className="px-3 py-2.5 w-24">Subtotal</th>
                     <th className="px-3 py-2.5 w-24">Paid</th>
                     {!isViewMode && <th className="px-3 py-2.5 w-10"></th>}
@@ -352,9 +398,21 @@ export const Expenses: React.FC = () => {
                   {items.map((item, index) => (
                     <tr key={index}>
                       <td className="px-3 py-2"><input disabled={isViewMode} type="text" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm font-medium" placeholder="Item name" value={item.product} onChange={e => handleItemChange(index, 'product', e.target.value)} /></td>
-                      <td className="px-3 py-2"><input disabled={isViewMode} type="number" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm" value={item.amount} onChange={e => handleItemChange(index, 'amount', e.target.value)} /></td>
+                      <td className="px-3 py-2">
+                        <select disabled={isViewMode} className="w-full bg-transparent border-none focus:ring-0 p-0 text-xs font-bold text-gray-500" value={item.taxType || 'Exclusive'} onChange={e => handleItemChange(index, 'taxType', e.target.value)}>
+                          <option value="Exclusive">Excl.</option>
+                          <option value="Inclusive">Incl.</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col">
+                          <span className="text-[8px] text-gray-400 font-bold uppercase">{item.taxType === 'Inclusive' ? 'Total' : 'Base'}</span>
+                          <input disabled={isViewMode} type="number" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm" value={item.amount} onChange={e => handleItemChange(index, 'amount', e.target.value)} />
+                        </div>
+                      </td>
                       <td className="px-3 py-2"><input disabled={isViewMode} type="number" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm" value={item.tax} onChange={e => handleItemChange(index, 'tax', e.target.value)} /></td>
-                      <td className="px-3 py-2 font-bold text-gray-900">{currency}{item.subtotal?.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-xs text-gray-400 font-medium">{currency}{Number(item.taxAmount || 0).toFixed(2)}</td>
+                      <td className="px-3 py-2 font-bold text-gray-900">{currency}{Number(item.subtotal || 0).toFixed(2)}</td>
                       <td className="px-3 py-2"><input disabled={isViewMode} type="number" className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm text-green-600 font-bold" value={item.paid} onChange={e => handleItemChange(index, 'paid', e.target.value)} /></td>
                       {!isViewMode && <td className="px-3 py-2 text-center"><button type="button" onClick={() => setItems(items.filter((_, i) => i !== index))} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button></td>}
                     </tr>

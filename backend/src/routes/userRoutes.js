@@ -8,5 +8,6 @@ router.get('/', protect, authorize('Admin', 'Manager', 'Accountant', 'Auditor'),
 router.post('/', protect, authorize('Admin', 'Manager'), createUser);
 router.put('/:id', protect, authorize('Admin', 'Manager'), updateUser);
 router.delete('/:id', protect, authorize('Admin'), deleteUser);
+router.get('/:id/export', protect, authorize('Admin', 'Manager', 'Accountant', 'Auditor'), require('../controllers/userController').exportClientData);
 
 module.exports = router;

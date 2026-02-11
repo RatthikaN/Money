@@ -23,6 +23,15 @@ const Recurring = sequelize.define('Recurring', {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: false
   },
+  taxType: {
+    type: DataTypes.ENUM('Inclusive', 'Exclusive'),
+    defaultValue: 'Exclusive'
+  },
+  taxRate: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 0,
+    validate: { min: 0 }
+  },
   nextRunDate: {
     type: DataTypes.DATEONLY,
     allowNull: false

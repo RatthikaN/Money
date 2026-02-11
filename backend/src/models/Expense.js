@@ -39,6 +39,16 @@ const Expense = sequelize.define('Expense', {
   status: {
     type: DataTypes.ENUM('Paid', 'Partial', 'Pending', 'Overdue'),
     defaultValue: 'Pending'
+  },
+  attachments: {
+    type: DataTypes.TEXT('long'), // Use LONGTEXT for storing large JSON strings/Base64
+    get() {
+      const rawValue = this.getDataValue('attachments');
+      return rawValue ? JSON.parse(rawValue) : [];
+    },
+    set(value) {
+      this.setDataValue('attachments', JSON.stringify(value));
+    }
   }
 }, {
   timestamps: true,
@@ -51,5 +61,10 @@ const Expense = sequelize.define('Expense', {
     }
   }
 });
+
+const ExpenseItem = require('./ExpenseItem');
+
+Expense.hasMany(ExpenseItem, { as: 'items', foreignKey: 'ExpenseId', onDelete: 'CASCADE' });
+ExpenseItem.belongsTo(Expense, { foreignKey: 'ExpenseId' });
 
 module.exports = Expense;

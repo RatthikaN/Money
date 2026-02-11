@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { Briefcase, UserPlus, Edit2, Trash2 } from 'lucide-react';
+import { Briefcase, UserPlus, Edit2, Trash2, Download } from 'lucide-react';
 import { api } from '../services/api';
 import { User } from '../types';
 import { Modal } from '../components/Modal';
@@ -57,7 +57,7 @@ export const Clients: React.FC = () => {
         setClients([...clients, newClient]);
       }
       setIsModalOpen(false);
-      setFormData({ role: 'Client', status: 'Active' }); 
+      setFormData({ role: 'Client', status: 'Active' });
     }
   };
 
@@ -65,7 +65,7 @@ export const Clients: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Client Management</h1>
-        <button 
+        <button
           onClick={handleAddNew}
           className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors"
         >
@@ -88,7 +88,7 @@ export const Clients: React.FC = () => {
             {clients.length === 0 ? (
               <tr>
                 <td colSpan={4} className="px-6 py-8 text-center text-gray-400">
-                   No clients found. Add one to get started.
+                  No clients found. Add one to get started.
                 </td>
               </tr>
             ) : clients.map((client) => (
@@ -101,14 +101,30 @@ export const Clients: React.FC = () => {
                 </td>
                 <td className="px-6 py-4 text-gray-600">{client.email}</td>
                 <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    client.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                  }`}>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${client.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                    }`}>
                     {client.status}
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex justify-end space-x-2">
+                    <button type="button" onClick={async () => {
+                      try {
+                        const blob = await api.clients.export(client.id);
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `client-${client.name.replace(/\s+/g, '_')}-export.zip`;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                      } catch (e) {
+                        alert('Failed to export client data');
+                      }
+                    }} className="p-1 text-gray-400 hover:text-indigo-600" title="Export Data">
+                      <Download size={18} />
+                    </button>
                     <button type="button" onClick={() => handleEdit(client)} className="p-1 text-gray-400 hover:text-green-600">
                       <Edit2 size={18} />
                     </button>
@@ -127,36 +143,36 @@ export const Clients: React.FC = () => {
         <form onSubmit={handleSave} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Client / Company Name</label>
-            <input 
-              required 
-              type="text" 
-              className="w-full border border-gray-300 rounded-lg p-2" 
+            <input
+              required
+              type="text"
+              className="w-full border border-gray-300 rounded-lg p-2"
               value={formData.name || ''}
-              onChange={e => setFormData({...formData, name: e.target.value})} 
+              onChange={e => setFormData({ ...formData, name: e.target.value })}
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Contact Email</label>
-            <input 
-              required 
-              type="email" 
-              className="w-full border border-gray-300 rounded-lg p-2" 
+            <input
+              required
+              type="email"
+              className="w-full border border-gray-300 rounded-lg p-2"
               value={formData.email || ''}
-              onChange={e => setFormData({...formData, email: e.target.value})} 
+              onChange={e => setFormData({ ...formData, email: e.target.value })}
             />
           </div>
           <div>
-             <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-             <select 
-               className="w-full border border-gray-300 rounded-lg p-2 bg-white" 
-               value={formData.status}
-               onChange={e => setFormData({...formData, status: e.target.value as any})}
-             >
-               <option value="Active">Active</option>
-               <option value="Inactive">Inactive</option>
-             </select>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+            <select
+              className="w-full border border-gray-300 rounded-lg p-2 bg-white"
+              value={formData.status}
+              onChange={e => setFormData({ ...formData, status: e.target.value as any })}
+            >
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
           </div>
-          
+
           <div className="flex justify-end pt-4 space-x-3">
             <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">Cancel</button>
             <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">

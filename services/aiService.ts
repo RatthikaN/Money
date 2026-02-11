@@ -5,7 +5,7 @@ import { GoogleGenAI, Type } from "@google/genai";
  * Uses the API key provided in the environment or the hardcoded fallback provided by the user.
  */
 const getAiClient = () => {
-  const apiKey = process.env.API_KEY || 'AIzaSyC2AikaJ4cUrijBPS4sKRMGBG4kT2sstds';
+  const apiKey = process.env.API_KEY || 'AIzaSyAxCel7eKGzV4tHFfL6xIz4GLRLERqUO_o';
   return new GoogleGenAI({ apiKey });
 };
 
@@ -20,7 +20,7 @@ export const aiService = {
    * Simple check to see if AI is ready to use.
    */
   hasValidKey: (): boolean => {
-    return !!(process.env.API_KEY || 'AIzaSyC2AikaJ4cUrijBPS4sKRMGBG4kT2sstds');
+    return !!(process.env.API_KEY || 'AIzaSyAxCel7eKGzV4tHFfL6xIz4GLRLERqUO_o');
   },
 
   /**
@@ -29,7 +29,7 @@ export const aiService = {
   extractInvoiceDetails: async (base64Image: string, mimeType: string) => {
     try {
       const ai = getAiClient();
-      
+
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: {
@@ -53,6 +53,8 @@ export const aiService = {
               shop: { type: Type.STRING, nullable: true },
               totalAmount: { type: Type.NUMBER, nullable: true },
               date: { type: Type.STRING, description: "YYYY-MM-DD format", nullable: true },
+              taxType: { type: Type.STRING, enum: ["Inclusive", "Exclusive"], nullable: true },
+              taxRate: { type: Type.NUMBER, nullable: true },
               items: {
                 type: Type.ARRAY,
                 items: {
@@ -84,7 +86,7 @@ export const aiService = {
   extractBusinessDetails: async (base64Image: string, mimeType: string) => {
     try {
       const ai = getAiClient();
-      
+
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: {
@@ -131,7 +133,7 @@ export const aiService = {
   extractClientDetails: async (base64Image: string, mimeType: string) => {
     try {
       const ai = getAiClient();
-      
+
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: {
@@ -181,7 +183,7 @@ export const aiService = {
   generateInsights: async (data: any, context: 'Incoming' | 'Recurring' | 'Reports') => {
     try {
       const ai = getAiClient();
-      
+
       const promptMap = {
         Incoming: "Analyze this list of recent incoming payments. Identify trends and top clients. Under 50 words.",
         Recurring: "Analyze these recurring items. Suggest one optimization. Under 50 words.",
@@ -201,23 +203,29 @@ export const aiService = {
   },
 
   /**
-   * Chat with the data for the Assistant
+   * Chat with the data for the Assistant (Multi-turn)
    */
-  chatWithData: async (userMessage: string, data: any, type: string) => {
+  chatWithData: async (userMessage: string, data: any, type: string, chatHistory: { role: 'user' | 'assistant', text: string }[] = []) => {
     try {
       const ai = getAiClient();
-      
-      const dataContext = JSON.stringify(data).slice(0, 50000); 
+
+      const dataContext = JSON.stringify(data).slice(0, 50000);
+
+      // Convert chat history to Gemini format if needed, or just append to prompt for context
+      const historyContext = chatHistory.map(msg => `${msg.role.toUpperCase()}: ${msg.text}`).join('\n');
 
       const prompt = `
         You are a smart financial assistant.
         The user is looking at "${type}" data:
         ${dataContext}
 
+        PREVIOUS CONVERSATION:
+        ${historyContext}
+
         USER QUESTION: "${userMessage}"
 
         INSTRUCTIONS:
-        1. Answer based strictly on data.
+        1. Answer based strictly on data and previous conversation context.
         2. Format money with symbols found in data.
         3. Keep answers concise.
       `;

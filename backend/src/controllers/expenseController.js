@@ -1,33 +1,93 @@
 const Expense = require('../models/Expense');
-const { Op } = require('sequelize');
+const ExpenseItem = require('../models/ExpenseItem');
+const User = require('../models/User');
+const { sendPushNotification } = require('../services/notificationService');
 
 exports.getExpenses = async (req, res) => {
   try {
-    const expenses = await Expense.findAll({ order: [['date', 'DESC']] });
+    const expenses = await Expense.findAll({
+      include: [{ model: ExpenseItem, as: 'items' }],
+      order: [['date', 'DESC']]
+    });
     res.json(expenses);
   } catch (error) {
+    console.error("Get Expenses Error:", error);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.createExpense = async (req, res) => {
   try {
-    const expense = await Expense.create(req.body);
-    res.status(201).json(expense);
+    const { items, ...expenseData } = req.body;
+
+    // Ensure attachments is passed as array/object so model setter can stringify it
+    // If it's already a string (unlikely from frontend JSON), parse it first
+    if (typeof expenseData.attachments === 'string') {
+      try {
+        expenseData.attachments = JSON.parse(expenseData.attachments);
+      } catch (e) {
+        expenseData.attachments = [];
+      }
+    }
+
+    const expense = await Expense.create(expenseData);
+
+    if (items && items.length > 0) {
+      await Promise.all(items.map(item =>
+        ExpenseItem.create({ ...item, ExpenseId: expense.id })
+      ));
+    }
+
+    // Trigger push notification to the user
+    // ... (existing notification logic) ...
+    const user = await User.findByPk(req.user.id);
+    if (user && user.pushSubscription) {
+      sendPushNotification(user.pushSubscription, {
+        title: 'Expense Recorded 💸',
+        body: `Successfully recorded ${expense.name} for $${expense.actualAmount}.`,
+        url: '/#/expenses'
+      });
+    }
+
+    const createdExpense = await Expense.findByPk(expense.id, { include: [{ model: ExpenseItem, as: 'items' }] });
+    res.status(201).json(createdExpense);
   } catch (error) {
-    res.status(400).json({ message: 'Invalid data', error });
+    console.error("Create Expense Error:", error);
+    res.status(400).json({ message: 'Invalid data', error: error.message });
   }
 };
 
 exports.updateExpense = async (req, res) => {
   try {
+    const { items, ...updateData } = req.body;
     const expense = await Expense.findByPk(req.params.id);
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
 
-    await expense.update(req.body);
-    res.json(expense);
+    if (typeof updateData.attachments === 'string') {
+      try {
+        updateData.attachments = JSON.parse(updateData.attachments);
+      } catch (e) {
+        updateData.attachments = [];
+      }
+    }
+
+    await expense.update(updateData);
+
+    if (items) {
+      // Replace items strategy
+      await ExpenseItem.destroy({ where: { ExpenseId: expense.id } });
+      if (items.length > 0) {
+        await Promise.all(items.map(item =>
+          ExpenseItem.create({ ...item, ExpenseId: expense.id })
+        ));
+      }
+    }
+
+    const updatedExpense = await Expense.findByPk(expense.id, { include: [{ model: ExpenseItem, as: 'items' }] });
+    res.json(updatedExpense);
   } catch (error) {
-    res.status(400).json({ message: 'Update failed', error });
+    console.error("Update Expense Error:", error);
+    res.status(400).json({ message: 'Update failed', error: error.message });
   }
 };
 
@@ -35,7 +95,6 @@ exports.deleteExpense = async (req, res) => {
   try {
     const expense = await Expense.findByPk(req.params.id);
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
-
     await expense.destroy();
     res.json({ message: 'Expense deleted' });
   } catch (error) {

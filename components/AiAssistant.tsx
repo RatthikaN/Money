@@ -34,7 +34,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ data, type }) => {
   // Update initial message if data length changes significantly
   useEffect(() => {
     if (messages.length === 1 && messages[0].id === 'init') {
-       setMessages([{ id: 'init', role: 'assistant', text: `Hello! I'm your ${type} assistant. I can analyze the ${data.length} records currently on your screen. Ask me anything!` }]);
+      setMessages([{ id: 'init', role: 'assistant', text: `Hello! I'm your ${type} assistant. I can analyze the ${data.length} records currently on your screen. Ask me anything!` }]);
     }
   }, [data.length, type]);
 
@@ -48,7 +48,10 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ data, type }) => {
     setIsLoading(true);
 
     try {
-      const response = await aiService.chatWithData(userMsg.text, data, type);
+      // Pass the simplified history to the AI service
+      const history = messages.map(m => ({ role: m.role, text: m.text }));
+      const response = await aiService.chatWithData(userMsg.text, data, type, history);
+
       const aiMsg: Message = { id: (Date.now() + 1).toString(), role: 'assistant', text: response };
       setMessages(prev => [...prev, aiMsg]);
     } catch (error) {
@@ -63,9 +66,8 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ data, type }) => {
       {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-6 right-6 p-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 z-50 flex items-center justify-center ${
-            isOpen ? 'bg-gray-800 text-white rotate-90' : 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white'
-        }`}
+        className={`fixed bottom-6 right-6 p-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 z-50 flex items-center justify-center ${isOpen ? 'bg-gray-800 text-white rotate-90' : 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white'
+          }`}
       >
         {isOpen ? <X size={24} /> : <Sparkles size={24} />}
       </button>
@@ -85,7 +87,7 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ data, type }) => {
               </div>
             </div>
             <button onClick={() => setIsOpen(false)} className="text-white/80 hover:text-white">
-               <X size={18} />
+              <X size={18} />
             </button>
           </div>
 
@@ -97,11 +99,10 @@ export const AiAssistant: React.FC<AiAssistantProps> = ({ data, type }) => {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${
-                    msg.role === 'user'
+                  className={`max-w-[85%] p-3 rounded-2xl text-sm leading-relaxed ${msg.role === 'user'
                       ? 'bg-indigo-600 text-white rounded-tr-sm shadow-md shadow-indigo-200'
                       : 'bg-white text-gray-800 border border-gray-100 shadow-sm rounded-tl-sm'
-                  }`}
+                    }`}
                 >
                   {msg.text}
                 </div>

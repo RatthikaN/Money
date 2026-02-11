@@ -5,12 +5,12 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, code } = req.body;
   console.log(`\n🔑 Login Attempt received for: ${email}`);
 
   try {
     const user = await User.findOne({ where: { email } });
-    
+
     if (!user) {
       console.log(`❌ Login Failed: User with email ${email} NOT FOUND in database.`);
       return res.status(400).json({ message: 'Invalid credentials (User not found)' });
@@ -20,6 +20,22 @@ exports.login = async (req, res) => {
     if (!isMatch) {
       console.log(`❌ Login Failed: Password incorrect for ${email}`);
       return res.status(400).json({ message: 'Invalid credentials (Wrong password)' });
+    }
+
+    // 2FA Check
+    if (user.twoFactorEnabled) {
+      if (!code) {
+        console.log(`ℹ️ 2FA Required for ${email}`);
+        return res.json({ twoFactorRequired: true }); // Client should prompt for code
+      }
+
+      const { authenticator } = require('otplib');
+      const isValid = authenticator.check(code, user.twoFactorSecret);
+
+      if (!isValid) {
+        console.log(`❌ 2FA Failed: Invalid Code for ${email}`);
+        return res.status(400).json({ message: 'Invalid 2FA Code' });
+      }
     }
 
     console.log(`✅ Login Successful for ${email} (${user.role})`);
@@ -33,9 +49,9 @@ exports.login = async (req, res) => {
 };
 
 exports.register = async (req, res) => {
-  const { 
-    name, email, password, role, 
-    companyName, companyAddress, city, state, zipCode, gstNumber, phoneNumber 
+  const {
+    name, email, password, role,
+    companyName, companyAddress, city, state, zipCode, gstNumber, phoneNumber
   } = req.body;
 
   try {
@@ -50,10 +66,10 @@ exports.register = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     // Explicitly select fields to avoid passing unknowns to Sequelize
-    const newUser = await User.create({ 
-      name, 
-      email, 
-      password: hashedPassword, 
+    const newUser = await User.create({
+      name,
+      email,
+      password: hashedPassword,
       role: role || 'Manager',
       status: 'Active'
     });
@@ -65,7 +81,7 @@ exports.register = async (req, res) => {
     if (companyName) {
       try {
         const fullAddress = [companyAddress, city, state, zipCode].filter(Boolean).join(', ');
-        
+
         // Save Business Settings
         await Setting.upsert({
           key: 'business',
@@ -106,17 +122,17 @@ exports.register = async (req, res) => {
       }
     }
 
-    res.status(201).json({ 
-      message: 'User registered successfully', 
-      user: { id: newUser.id, name: newUser.name, email: newUser.email } 
+    res.status(201).json({
+      message: 'User registered successfully',
+      user: { id: newUser.id, name: newUser.name, email: newUser.email }
     });
 
   } catch (error) {
     console.error("❌ Registration Error:", error);
     // Return the specific error message to the frontend
-    res.status(500).json({ 
-      message: 'Error registering user', 
-      error: error.message || 'Unknown server error' 
+    res.status(500).json({
+      message: 'Error registering user',
+      error: error.message || 'Unknown server error'
     });
   }
 };

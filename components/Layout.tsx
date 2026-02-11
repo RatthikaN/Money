@@ -99,7 +99,7 @@ export const Layout = ({ children }: { children?: React.ReactNode }) => {
           {shouldShow('/incoming') && <NavItem to="/incoming" icon={TrendingUp} label="Incoming" onClick={() => setIsMobileMenuOpen(false)} />}
           {shouldShow('/recurring') && <NavItem to="/recurring" icon={Repeat} label="Recurring" onClick={() => setIsMobileMenuOpen(false)} />}
           {/* Fix: Adding Budgets Nav Item */}
-          {shouldShow('/budgets') && <NavItem to="/budgets" icon={Target} label="Spending Budgets" onClick={() => setIsMobileMenuOpen(false)} />}
+          {/* {shouldShow('/budgets') && <NavItem to="/budgets" icon={Target} label="Spending Budgets" onClick={() => setIsMobileMenuOpen(false)} />} */}
           {shouldShow('/reports') && <NavItem to="/reports" icon={FileBarChart} label="Financial Reports" onClick={() => setIsMobileMenuOpen(false)} />}
           {shouldShow('/clients') && <NavItem to="/clients" icon={Briefcase} label="Client Management" onClick={() => setIsMobileMenuOpen(false)} />}
           {shouldShow('/users') && <NavItem to="/users" icon={Users} label="Internal Team" onClick={() => setIsMobileMenuOpen(false)} />}

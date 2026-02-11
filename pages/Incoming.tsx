@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Eye, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Search, Eye, Edit2, Trash2, FileText } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { api, getCurrencySymbol } from '../services/api';
-import { IncomingPayment, RecurringItem, User } from '../types';
+import { IncomingPayment, RecurringItem, User, IncomingItem, Attachment } from '../types';
 import { AiAssistant } from '../components/AiAssistant';
+import { GeneralSettings } from '../types';
 
 export const Incoming: React.FC = () => {
   const [payments, setPayments] = useState<IncomingPayment[]>([]);
@@ -21,10 +22,50 @@ export const Incoming: React.FC = () => {
     status: 'Pending',
     mode: 'Bank',
     date: new Date().toISOString().split('T')[0],
-    paymentType: 'One Time Payment'
+    paymentType: 'One Time Payment',
+    project: ''
   });
+  const [items, setItems] = useState<IncomingItem[]>([]);
+  const [attachments, setAttachments] = useState<(string | Attachment)[]>([]);
+  const [settings, setSettings] = useState<GeneralSettings | null>(null);
 
-  // Helper state to track the selected recurring rule ID explicitly
+
+
+  const handleItemChange = (index: number, field: keyof IncomingItem, value: any) => {
+    const newItems = [...items];
+    const item = { ...newItems[index] };
+    (item as any)[field] = value;
+
+    const qty = Number(item.quantity) || 0;
+    const rate = Number(item.rate) || 0;
+    const taxRate = Number(item.taxRate) || 0;
+
+    if (item.taxType === 'Inclusive') {
+      // Inclusive: Total = Qty * Rate. Base and Tax are derived.
+      const total = qty * rate;
+      const base = total / (1 + (taxRate / 100));
+      item.amount = parseFloat(base.toFixed(2));
+      item.taxAmount = parseFloat((total - base).toFixed(2));
+      item.total = parseFloat(total.toFixed(2));
+    } else {
+      // Exclusive: Amount = Qty * Rate. Tax is added on top.
+      const amount = qty * rate;
+      const taxAmount = (amount * taxRate) / 100;
+      item.amount = parseFloat(amount.toFixed(2));
+      item.taxAmount = parseFloat(taxAmount.toFixed(2));
+      item.total = parseFloat((amount + taxAmount).toFixed(2));
+    }
+
+    newItems[index] = item;
+    setItems(newItems);
+    calculateGlobalTotals(newItems);
+  };
+
+  const calculateGlobalTotals = (currentItems: IncomingItem[]) => {
+    const totalActual = currentItems.reduce((sum, item) => sum + (item.total || 0), 0);
+    setFormData(prev => ({ ...prev, actualAmount: totalActual, dueAmount: totalActual - (prev.paidAmount || 0) }));
+  };
+
   const [selectedRecurringId, setSelectedRecurringId] = useState<string>('');
 
   useEffect(() => {
@@ -33,18 +74,20 @@ export const Incoming: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [paymentsData, recurringData, clientsData] = await Promise.all([
+      const [paymentsData, recurringData, clientsData, settingsData] = await Promise.all([
         api.incoming.getAll(),
         api.recurring.getAll(),
-        api.clients.getAll()
+        api.clients.getAll(),
+        api.settings.getGeneral()
       ]);
-      
+
       setPayments(paymentsData || []);
       setClients(clientsData || []);
-      
+      setSettings(settingsData);
+
       // Filter for ALL active rules (Show both Income and Expense so user can find them if categorized differently)
-      const activeRules = Array.isArray(recurringData) 
-        ? recurringData.filter(r => r.status === 'Active') 
+      const activeRules = Array.isArray(recurringData)
+        ? recurringData.filter(r => r.status === 'Active')
         : [];
       setRecurringRules(activeRules);
     } catch (e) {
@@ -60,8 +103,11 @@ export const Incoming: React.FC = () => {
       status: 'Pending',
       mode: 'Bank',
       date: new Date().toISOString().split('T')[0],
-      paymentType: 'One Time Payment'
+      paymentType: 'One Time Payment',
+      project: ''
     });
+    setItems([{ product: '', hsnSac: '', quantity: 1, rate: 0, amount: 0, taxRate: 0, taxType: 'Exclusive', taxAmount: 0, total: 0 }]);
+    setAttachments([]);
     setIsModalOpen(true);
     loadData();
   };
@@ -71,8 +117,10 @@ export const Incoming: React.FC = () => {
     setIsViewMode(false);
     // If it's recurring, we might want to try and find the matching rule ID, 
     // but usually just showing the name is enough for editing.
-    setSelectedRecurringId(''); 
+    setSelectedRecurringId('');
     setFormData({ ...payment });
+    setItems(payment.items || []);
+    setAttachments(payment.attachments || []);
     setIsModalOpen(true);
   };
 
@@ -80,6 +128,8 @@ export const Incoming: React.FC = () => {
     setEditingId(payment.id);
     setIsViewMode(true);
     setFormData({ ...payment });
+    setItems(payment.items || []);
+    setAttachments(payment.attachments || []);
     setIsModalOpen(true);
   };
 
@@ -96,33 +146,34 @@ export const Incoming: React.FC = () => {
     e.preventDefault();
     if (isViewMode) return;
 
-    if (formData.client && formData.actualAmount) {
+    if (formData.client && items.length > 0) {
       const clientName = formData.client.trim();
-      
+
       // Auto-create client if "One Time Payment" and new name
       if (formData.paymentType === 'One Time Payment' && clientName) {
-         const existingClient = clients.find(c => c.name.toLowerCase() === clientName.toLowerCase());
-         if (!existingClient) {
-            try {
-              await api.clients.create({
-                name: clientName,
-                email: `${clientName.replace(/\s+/g, '.').toLowerCase()}@example.com`,
-                status: 'Active'
-              });
-            } catch (err) {
-              console.error("Failed to auto-create client");
-            }
-         }
+        const existingClient = clients.find(c => c.name.toLowerCase() === clientName.toLowerCase());
+        if (!existingClient) {
+          try {
+            await api.clients.create({
+              name: clientName,
+              email: `${clientName.replace(/\s+/g, '.').toLowerCase()}@example.com`,
+              status: 'Active'
+            });
+          } catch (err) {
+            console.error("Failed to auto-create client");
+          }
+        }
       }
 
       try {
         if (editingId) {
-            await api.incoming.update(editingId, formData);
+          await api.incoming.update(editingId, { ...formData, items, attachments });
         } else {
-            await api.incoming.create(formData as any);
+          await api.incoming.create({ ...formData, items, attachments } as any);
         }
         setIsModalOpen(false);
         setFormData({ status: 'Pending', mode: 'Bank', date: new Date().toISOString().split('T')[0], paymentType: 'One Time Payment' });
+        setItems([]);
         loadData(); // Force refresh to show correct data from DB
       } catch (e) {
         alert("Failed to save payment.");
@@ -132,10 +183,10 @@ export const Incoming: React.FC = () => {
 
   const handleRecurringSelect = (ruleId: string) => {
     setSelectedRecurringId(ruleId);
-    
+
     // Convert ruleId to String to ensure matching works against DB numbers
     const rule = recurringRules.find(r => String(r.id) === String(ruleId));
-    
+
     if (rule) {
       const amount = Number(rule.amount);
       setFormData(prev => ({
@@ -147,11 +198,30 @@ export const Incoming: React.FC = () => {
         project: 'Recurring Income',
         paymentType: 'Recurring'
       }));
+      setItems([{
+        product: rule.name,
+        hsnSac: '',
+        quantity: 1,
+        rate: amount,
+        amount: amount,
+        taxRate: rule.taxRate || 0,
+        taxType: rule.taxType || 'Exclusive',
+        taxAmount: calculateItemTax(amount, rule.taxRate || 0, rule.taxType || 'Exclusive'),
+        total: amount
+      }]);
     }
   };
 
-  const filtered = payments.filter(p => 
-    p.client.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  const calculateItemTax = (amount: number, rate: number, type: 'Inclusive' | 'Exclusive') => {
+    if (type === 'Inclusive') {
+      const base = amount / (1 + (rate / 100));
+      return parseFloat((amount - base).toFixed(2));
+    }
+    return parseFloat(((amount * rate) / 100).toFixed(2));
+  };
+
+  const filtered = payments.filter(p =>
+    p.client.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.project.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -161,7 +231,7 @@ export const Incoming: React.FC = () => {
     <div className="space-y-6 relative min-h-[calc(100vh-100px)]">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Incoming Payments</h1>
-        <button 
+        <button
           onClick={handleAddNew}
           className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors"
         >
@@ -173,9 +243,9 @@ export const Incoming: React.FC = () => {
       <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-2.5 text-gray-400" size={20} />
-          <input 
-            type="text" 
-            placeholder="Search client or project..." 
+          <input
+            type="text"
+            placeholder="Search client or project..."
             className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -219,9 +289,8 @@ export const Incoming: React.FC = () => {
                   <td className="px-6 py-4 text-right text-green-600">{currency}{Number(item.paidAmount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 text-right text-red-600">{currency}{Number(item.dueAmount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      item.status === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                    }`}>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${item.status === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                      }`}>
                       {item.status}
                     </span>
                   </td>
@@ -229,12 +298,13 @@ export const Incoming: React.FC = () => {
                   <td className="px-6 py-4 text-gray-500 font-mono text-xs">{item.transactionNo || '-'}</td>
                   <td className="px-6 py-4">
                     <div className="flex justify-center space-x-2">
-                      <button type="button" onClick={() => handleView(item)} className="p-1 text-gray-400 hover:text-blue-600"><Eye size={18} /></button>
-                      <button type="button" onClick={() => handleEdit(item)} className="p-1 text-gray-400 hover:text-green-600"><Edit2 size={18} /></button>
-                      <button 
-                        type="button" 
-                        onClick={(e) => handleDelete(e, item.id)} 
+                      <button type="button" onClick={() => handleView(item)} className="p-1 text-gray-400 hover:text-blue-600" title="View Details"><Eye size={18} /></button>
+                      <button type="button" onClick={() => handleEdit(item)} className="p-1 text-gray-400 hover:text-green-600" title="Edit"><Edit2 size={18} /></button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDelete(e, item.id)}
                         className="p-1 text-gray-400 hover:text-red-600"
+                        title="Delete"
                       >
                         <Trash2 size={18} />
                       </button>
@@ -248,170 +318,226 @@ export const Incoming: React.FC = () => {
       </div>
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalTitle}>
+
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <div>
-               <label className="block text-sm font-medium text-gray-700 mb-1">Payment Type</label>
-               <select 
-                 disabled={isViewMode}
-                 className="w-full border rounded-lg p-2 bg-white disabled:bg-gray-100" 
-                 value={formData.paymentType || 'One Time Payment'} 
-                 onChange={e => {
-                    const newType = e.target.value;
-                    setFormData({...formData, paymentType: newType});
-                    if (newType === 'One Time Payment') {
-                        setSelectedRecurringId('');
-                    }
-                 }} 
-               >
-                 <option value="One Time Payment">One Time Payment</option>
-                 <option value="Recurring">Recurring</option>
-               </select>
-             </div>
-             <div>
-               <label className="block text-sm font-medium text-gray-700 mb-1">Client Name</label>
-               {formData.paymentType === 'Recurring' && !isViewMode ? (
-                 <select
-                   className="w-full border rounded-lg p-2 bg-indigo-50 border-indigo-200 text-indigo-900 focus:ring-2 focus:ring-indigo-500"
-                   value={selectedRecurringId}
-                   onChange={(e) => handleRecurringSelect(e.target.value)}
-                 >
-                   <option value="">-- Select Recurring Rule --</option>
-                   {(!recurringRules || recurringRules.length === 0) && <option disabled>No active recurring rules found</option>}
-                   {recurringRules && recurringRules.map(rule => (
-                     <option key={rule.id} value={rule.id}>
-                       [{rule.type}] {rule.name} - {currency}{Number(rule.amount).toLocaleString()} ({rule.frequency})
-                     </option>
-                   ))}
-                 </select>
-               ) : (
-                 <>
-                   <input 
-                     required 
-                     disabled={isViewMode}
-                     type="text" 
-                     list="clients-list"
-                     placeholder="Select or type new client..."
-                     className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                     value={formData.client || ''} 
-                     onChange={e => setFormData({...formData, client: e.target.value})} 
-                   />
-                   <datalist id="clients-list">
-                     {clients.map(client => (
-                       <option key={client.id} value={client.name} />
-                     ))}
-                   </datalist>
-                 </>
-               )}
-             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Type</label>
+              <select
+                disabled={isViewMode}
+                className="w-full border rounded-lg p-2 bg-white disabled:bg-gray-100"
+                value={formData.paymentType || 'One Time Payment'}
+                onChange={e => {
+                  const newType = e.target.value;
+                  setFormData({ ...formData, paymentType: newType });
+                  if (newType === 'One Time Payment') {
+                    setSelectedRecurringId('');
+                  }
+                }}
+              >
+                <option value="One Time Payment">One Time Payment</option>
+                <option value="Recurring">Recurring</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Client Name</label>
+              {formData.paymentType === 'Recurring' && !isViewMode ? (
+                <select
+                  className="w-full border rounded-lg p-2 bg-indigo-50 border-indigo-200 text-indigo-900 focus:ring-2 focus:ring-indigo-500"
+                  value={selectedRecurringId}
+                  onChange={(e) => handleRecurringSelect(e.target.value)}
+                >
+                  <option value="">-- Select Recurring Rule --</option>
+                  {(!recurringRules || recurringRules.length === 0) && <option disabled>No active recurring rules found</option>}
+                  {recurringRules && recurringRules.map(rule => (
+                    <option key={rule.id} value={rule.id}>
+                      [{rule.type}] {rule.name} - {currency}{Number(rule.amount).toLocaleString()} ({rule.frequency})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    required
+                    disabled={isViewMode}
+                    type="text"
+                    list="clients-list"
+                    placeholder="Select or type new client..."
+                    className="w-full border rounded-lg p-2 disabled:bg-gray-100"
+                    value={formData.client || ''}
+                    onChange={e => setFormData({ ...formData, client: e.target.value })}
+                  />
+                  <datalist id="clients-list">
+                    {clients.map(client => (
+                      <option key={client.id} value={client.name} />
+                    ))}
+                  </datalist>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
-              <input 
-                type="text" 
+              <label className="block text-sm font-medium text-gray-700 mb-1">Project / Description</label>
+              <input
+                type="text"
                 disabled={isViewMode}
-                className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                value={formData.project || ''} 
-                onChange={e => setFormData({...formData, project: e.target.value})} 
+                placeholder="e.g. Website Development"
+                className="w-full border rounded-lg p-2 disabled:bg-gray-100"
+                value={formData.project || ''}
+                onChange={e => setFormData({ ...formData, project: e.target.value })}
               />
             </div>
             <div>
-               <label className="block text-sm font-medium text-gray-700 mb-1">Actual ({currency})</label>
-               <input 
-                 required 
-                 disabled={isViewMode}
-                 type="number" 
-                 className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                 value={formData.actualAmount || ''} 
-                 onChange={e => setFormData({...formData, actualAmount: Number(e.target.value)})} 
-               />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+              <input
+                type="date"
+                disabled={isViewMode}
+                className="w-full border rounded-lg p-2 disabled:bg-gray-100"
+                value={formData.date || ''}
+                onChange={e => setFormData({ ...formData, date: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-bold text-gray-800">Itemized Breakdown</h3>
+              {!isViewMode && (
+                <button
+                  type="button"
+                  onClick={() => setItems([...items, { product: '', hsnSac: '', quantity: 1, rate: 0, amount: 0, taxRate: 0, taxType: 'Exclusive', taxAmount: 0, total: 0 }])}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1"
+                >
+                  <Plus size={14} /> Add Item
+                </button>
+              )}
+            </div>
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="px-2 py-2 text-left">Description</th>
+                    <th className="px-2 py-2 text-left w-20">HSN/SAC</th>
+                    <th className="px-2 py-2 text-center w-16">Qty</th>
+                    <th className="px-2 py-2 text-right w-24">Rate</th>
+                    <th className="px-2 py-2 text-center w-24">Tax Type</th>
+                    <th className="px-2 py-2 text-center w-16">Tax %</th>
+                    <th className="px-2 py-2 text-right w-24">Total</th>
+                    {!isViewMode && <th className="px-2 py-2 w-8"></th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {items.map((item, idx) => (
+                    <tr key={idx}>
+                      <td className="px-2 py-1"><input disabled={isViewMode} type="text" className="w-full bg-transparent p-1 focus:ring-1 focus:ring-blue-500 rounded" placeholder="Item Name" value={item.product} onChange={e => handleItemChange(idx, 'product', e.target.value)} /></td>
+                      <td className="px-2 py-1"><input disabled={isViewMode} type="text" className="w-full bg-transparent p-1 focus:ring-1 focus:ring-blue-500 rounded" placeholder="1001" value={item.hsnSac || ''} onChange={e => handleItemChange(idx, 'hsnSac', e.target.value)} /></td>
+                      <td className="px-2 py-1"><input disabled={isViewMode} type="number" className="w-full bg-transparent p-1 text-center focus:ring-1 focus:ring-blue-500 rounded" value={item.quantity} onChange={e => handleItemChange(idx, 'quantity', e.target.value)} /></td>
+                      <td className="px-2 py-1"><input disabled={isViewMode} type="number" className="w-full bg-transparent p-1 text-right focus:ring-1 focus:ring-blue-500 rounded" value={item.rate} onChange={e => handleItemChange(idx, 'rate', e.target.value)} /></td>
+                      <td className="px-2 py-1">
+                        <select disabled={isViewMode} className="w-full bg-transparent p-1 text-center focus:ring-1 focus:ring-blue-500 rounded" value={item.taxType} onChange={e => handleItemChange(idx, 'taxType', e.target.value)}>
+                          <option value="Exclusive">Excl.</option>
+                          <option value="Inclusive">Incl.</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-1"><input disabled={isViewMode} type="number" className="w-full bg-transparent p-1 text-center focus:ring-1 focus:ring-blue-500 rounded" value={item.taxRate} onChange={e => handleItemChange(idx, 'taxRate', e.target.value)} /></td>
+                      <td className="px-2 py-1 text-right font-bold">{currency}{item.total.toLocaleString()}</td>
+                      {!isViewMode && (
+                        <td className="px-2 py-1 text-center">
+                          <button type="button" onClick={() => setItems(items.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-               <label className="block text-sm font-medium text-gray-700 mb-1">Paid ({currency})</label>
-               <input 
-                 type="number" 
-                 disabled={isViewMode}
-                 className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                 value={formData.paidAmount || ''} 
-                 onChange={e => setFormData({...formData, paidAmount: Number(e.target.value)})} 
-               />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Paid ({currency})</label>
+              <input
+                type="number"
+                disabled={isViewMode}
+                className="w-full border rounded-lg p-2 disabled:bg-gray-100"
+                value={formData.paidAmount || ''}
+                onChange={e => setFormData({ ...formData, paidAmount: Number(e.target.value) })}
+              />
             </div>
             <div>
-               <label className="block text-sm font-medium text-gray-700 mb-1">Due ({currency})</label>
-               <input 
-                 readOnly 
-                 type="number" 
-                 className="w-full border rounded-lg p-2 bg-gray-50" 
-                 value={Number(formData.actualAmount || 0) - Number(formData.paidAmount || 0)} 
-               />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Due ({currency})</label>
+
+              <input
+                readOnly
+                type="number"
+                className="w-full border rounded-lg p-2 bg-gray-50"
+                value={Number(formData.actualAmount || 0) - Number(formData.paidAmount || 0)}
+              />
             </div>
           </div>
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-                <input 
-                  type="date" 
-                  disabled={isViewMode}
-                  className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                  value={formData.date || ''} 
-                  onChange={e => setFormData({...formData, date: e.target.value})} 
-                />
-             </div>
-             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                <select 
-                  disabled={isViewMode}
-                  className="w-full border rounded-lg p-2 bg-white disabled:bg-gray-100" 
-                  value={formData.status}
-                  onChange={e => setFormData({...formData, status: e.target.value as any})}
-                >
-                  <option value="Pending">Pending</option>
-                  <option value="Paid">Paid</option>
-                  <option value="Partial">Partial</option>
-                </select>
-             </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select
+                disabled={isViewMode}
+                className="w-full border rounded-lg p-2 bg-white disabled:bg-gray-100"
+                value={formData.status}
+                onChange={e => setFormData({ ...formData, status: e.target.value as any })}
+              >
+                <option value="Pending">Pending</option>
+                <option value="Paid">Paid</option>
+                <option value="Partial">Partial</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Final Total ({currency})</label>
+              <input
+                readOnly
+                type="number"
+                className="w-full border rounded-lg p-2 bg-gray-50 font-bold text-gray-800"
+                value={formData.actualAmount || 0}
+              />
+            </div>
           </div>
 
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mode</label>
-                <select 
-                  disabled={isViewMode}
-                  className="w-full border rounded-lg p-2 bg-white disabled:bg-gray-100"
-                  value={formData.mode}
-                  onChange={e => setFormData({...formData, mode: e.target.value as any})}
-                >
-                  <option value="Bank">Bank Transfer</option>
-                  <option value="Cash">Cash</option>
-                  <option value="UPI">UPI</option>
-                </select>
-             </div>
-             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Transaction No.</label>
-                <input 
-                  type="text" 
-                  disabled={isViewMode}
-                  className="w-full border rounded-lg p-2 disabled:bg-gray-100" 
-                  value={formData.transactionNo || ''}
-                  onChange={e => setFormData({...formData, transactionNo: e.target.value})}
-                />
-             </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Mode</label>
+              <select
+                disabled={isViewMode}
+                className="w-full border rounded-lg p-2 bg-white disabled:bg-gray-100"
+                value={formData.mode}
+                onChange={e => setFormData({ ...formData, mode: e.target.value as any })}
+              >
+                <option value="Bank">Bank Transfer</option>
+                <option value="Cash">Cash</option>
+                <option value="UPI">UPI</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Transaction No.</label>
+              <input
+                type="text"
+                disabled={isViewMode}
+                className="w-full border rounded-lg p-2 disabled:bg-gray-100"
+                value={formData.transactionNo || ''}
+                onChange={e => setFormData({ ...formData, transactionNo: e.target.value })}
+              />
+            </div>
           </div>
 
           <div className="flex justify-end pt-4 space-x-3">
-              <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">
-                {isViewMode ? 'Close' : 'Cancel'}
+            <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">
+              {isViewMode ? 'Close' : 'Cancel'}
+            </button>
+            {!isViewMode && (
+              <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2">
+                {editingId ? 'Update Payment' : 'Save Payment'}
               </button>
-              {!isViewMode && (
-                <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2">
-                  {editingId ? 'Update Payment' : 'Save Payment'}
-                </button>
-              )}
+            )}
           </div>
         </form>
       </Modal>

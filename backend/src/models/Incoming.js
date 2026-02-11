@@ -40,12 +40,31 @@ const Incoming = sequelize.define('Incoming', {
     type: DataTypes.ENUM('Paid', 'Partial', 'Pending', 'Overdue'),
     defaultValue: 'Pending'
   },
+  taxType: {
+    type: DataTypes.ENUM('Inclusive', 'Exclusive'),
+    defaultValue: 'Exclusive'
+  },
+  taxRate: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 0,
+    validate: { min: 0 }
+  },
   mode: {
     type: DataTypes.ENUM('Cash', 'Bank', 'UPI'),
     defaultValue: 'Bank'
   },
   transactionNo: {
     type: DataTypes.STRING
+  },
+  attachments: {
+    type: DataTypes.TEXT('long'),
+    get() {
+      const rawValue = this.getDataValue('attachments');
+      return rawValue ? JSON.parse(rawValue) : [];
+    },
+    set(value) {
+      this.setDataValue('attachments', JSON.stringify(value));
+    }
   }
 }, {
   timestamps: true,
@@ -58,5 +77,10 @@ const Incoming = sequelize.define('Incoming', {
     }
   }
 });
+
+const IncomingItem = require('./IncomingItem');
+
+Incoming.hasMany(IncomingItem, { as: 'items', foreignKey: 'IncomingId', onDelete: 'CASCADE' });
+IncomingItem.belongsTo(Incoming, { foreignKey: 'IncomingId' });
 
 module.exports = Incoming;

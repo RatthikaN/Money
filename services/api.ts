@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { DashboardMetrics, Expense, IncomingPayment, RecurringItem, User, GeneralSettings, CloudMailSettings, SocialSettings, PersonalSettings, Budget } from '../types';
+import { DashboardMetrics, Expense, IncomingPayment, RecurringItem, User, GeneralSettings, SmtpSettings, SocialSettings, PersonalSettings, Budget } from '../types';
 
 const API_URL = "http://localhost:5000/api";
 
@@ -17,13 +17,21 @@ const handleResponse = async (res: Response) => {
     window.location.href = '/#/login';
     throw new Error('Session expired. Please login again.');
   }
-  
+
+  const contentType = res.headers.get("content-type");
+
+  if (!contentType || !contentType.includes("application/json")) {
+    const text = await res.text();
+    console.error("Server returned non-JSON response:", text);
+    throw new Error(`Server Error (${res.status}): The backend returned an HTML page instead of JSON. Ensure your Node.js server is running on port 5000.`);
+  }
+
   const data = await res.json();
 
   if (!res.ok) {
     let errorMessage = data.message || `Request failed (${res.status})`;
     if (data.details) {
-        errorMessage += `: ${data.details}`;
+      errorMessage += `: ${data.details}`;
     }
     throw new Error(errorMessage);
   }
@@ -31,24 +39,24 @@ const handleResponse = async (res: Response) => {
 };
 
 export const currencySymbols: Record<string, string> = {
-  USD: '$', EUR: '€', GBP: '£', INR: '₹', JPY: '¥', AUD: 'A$', CAD: 'C$', SGD: 'S$', CHF: 'Fr', CNY: '¥', 
-  HKD: 'HK$', NZD: 'NZ$', SEK: 'kr', KRW: '₩', NOK: 'kr', MXN: '$', ZAR: 'R', TRY: '₺', 
-  BRL: 'R$', TWD: 'NT$', DKK: 'kr', PLN: 'zł', THB: '฿', IDR: 'Rp', HUF: 'Ft', CZK: 'Kč', ILS: '₪', 
+  USD: '$', EUR: '€', GBP: '£', INR: '₹', JPY: '¥', AUD: 'A$', CAD: 'C$', SGD: 'S$', CHF: 'Fr', CNY: '¥',
+  HKD: 'HK$', NZD: 'NZ$', SEK: 'kr', KRW: '₩', NOK: 'kr', MXN: '$', ZAR: 'R', TRY: '₺',
+  BRL: 'R$', TWD: 'NT$', DKK: 'kr', PLN: 'zł', THB: '฿', IDR: 'Rp', HUF: 'Ft', CZK: 'Kč', ILS: '₪',
   CLP: '$', PHP: '₱', AED: 'د.إ', SAR: '﷼', MYR: 'RM', RON: 'lei', RUB: 'ر.ب', KWD: 'KD', BHD: 'BD',
   QAR: '﷼', OMR: '﷼', JOD: 'JD', LBP: 'ل.ل', EGP: 'E£', VND: '₫', NGN: '₦', PKR: '₨'
 };
 
 export const timezones = [
-  "UTC", "Pacific/Midway", "Pacific/Honolulu", "America/Anchorage", "America/Los_Angeles", "America/Phoenix", 
-  "America/Denver", "America/Chicago", "America/New_York", "America/Caracas", "America/Sao_Paulo", 
-  "America/St_Johns", "Atlantic/Azores", "Europe/London", "Europe/Paris", "Europe/Zurich", "Europe/Berlin", 
-  "Europe/Istanbul", "Europe/Moscow", "Africa/Cairo", "Africa/Johannesburg", "Asia/Dubai", "Asia/Karachi", 
-  "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok", "Asia/Singapore", "Asia/Hong_Kong", "Asia/Tokyo", 
+  "UTC", "Pacific/Midway", "Pacific/Honolulu", "America/Anchorage", "America/Los_Angeles", "America/Phoenix",
+  "America/Denver", "America/Chicago", "America/New_York", "America/Caracas", "America/Sao_Paulo",
+  "America/St_Johns", "Atlantic/Azores", "Europe/London", "Europe/Paris", "Europe/Zurich", "Europe/Berlin",
+  "Europe/Istanbul", "Europe/Moscow", "Africa/Cairo", "Africa/Johannesburg", "Asia/Dubai", "Asia/Karachi",
+  "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok", "Asia/Singapore", "Asia/Hong_Kong", "Asia/Tokyo",
   "Asia/Seoul", "Australia/Perth", "Australia/Adelaide", "Australia/Sydney", "Australia/Brisbane", "Pacific/Auckland", "Pacific/Fiji"
 ];
 
 const defaultGeneral: GeneralSettings = { companyName: 'MoneyFlow Inc.', email: 'admin@moneyflow.com', currency: 'USD', timezone: 'UTC', dateFormat: 'YYYY-MM-DD', taxId: '' };
-const defaultCloudMail: CloudMailSettings = { apiKey: '', senderName: 'MoneyFlow Admin', senderEmail: '', isEnabled: false };
+const defaultSmtp: SmtpSettings = { host: 'smtp.gmail.com', port: 587, username: '', password: '', secure: false, senderName: 'MoneyFlow Admin', senderEmail: '', isEnabled: false };
 const defaultSocial: SocialSettings = { website: '', facebook: '', twitter: '', linkedin: '', instagram: '', customLinks: [] };
 const defaultPersonal: PersonalSettings = { name: 'Demo Admin', email: 'demo@demo.com', twoFactorEnabled: false };
 
@@ -82,7 +90,7 @@ export const compressImage = (file: File): Promise<string> => {
       img.src = dataUrl;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1200; 
+        const MAX_WIDTH = 1200;
         const MAX_HEIGHT = 1200;
         let width = img.width;
         let height = img.height;
@@ -101,35 +109,35 @@ export const compressImage = (file: File): Promise<string> => {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.7)); 
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
       };
-      img.onerror = () => resolve(dataUrl); 
+      img.onerror = () => resolve(dataUrl);
     };
     reader.onerror = reject;
   });
 };
 
 const fetchSetting = async <T>(section: string, defaultData: T): Promise<T> => {
-    try {
-        const res = await fetch(`${API_URL}/settings/${section.toLowerCase()}`, { headers: getAuthHeader() });
-        if (!res.ok) return defaultData;
-        const data = await res.json();
-        if (section.toLowerCase() === 'general') {
-          localStorage.setItem('generalSettings', JSON.stringify(data));
-        }
-        return Object.keys(data).length > 0 ? { ...defaultData, ...data } : defaultData;
-    } catch (e) {
-        return defaultData;
+  try {
+    const res = await fetch(`${API_URL}/settings/${section.toLowerCase()}`, { headers: getAuthHeader() });
+    if (!res.ok) return defaultData;
+    const data = await res.json();
+    if (section.toLowerCase() === 'general') {
+      localStorage.setItem('generalSettings', JSON.stringify(data));
     }
+    return Object.keys(data).length > 0 ? { ...defaultData, ...data } : defaultData;
+  } catch (e) {
+    return defaultData;
+  }
 };
 
 export const api = {
   auth: {
-    login: async (email: string, password: string) => {
+    login: async (email: string, password: string, code?: string) => {
       const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, code }),
       });
       return handleResponse(res);
     },
@@ -144,7 +152,7 @@ export const api = {
   },
   settings: {
     getGeneral: async (): Promise<GeneralSettings> => fetchSetting('general', defaultGeneral),
-    getCloudMail: async (): Promise<CloudMailSettings> => fetchSetting('cloudmail', defaultCloudMail),
+    getCloudMail: async (): Promise<SmtpSettings> => fetchSetting('cloudmail', defaultSmtp),
     getSocial: async (): Promise<SocialSettings> => fetchSetting('social', defaultSocial),
     getPersonal: async (): Promise<PersonalSettings> => fetchSetting('personal', defaultPersonal),
     update: async (section: string, data: any) => {
@@ -169,11 +177,11 @@ export const api = {
       return handleResponse(res);
     },
     testCloudMail: async (data: any) => {
-      const res = await fetch(`${API_URL}/settings/cloudmail/test`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify(data) });
+      const res = await fetch(`${API_URL}/settings/test-mail`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify(data) });
       return handleResponse(res);
     }
   },
-  dashboard: { 
+  dashboard: {
     getStats: async (month?: number, year?: number): Promise<DashboardMetrics> => {
       try {
         const queryParams = new URLSearchParams();
@@ -187,42 +195,46 @@ export const api = {
         }
         throw error;
       }
-    } 
+    }
   },
-  expenses: { 
+  expenses: {
     getAll: async (): Promise<Expense[]> => handleResponse(await fetch(`${API_URL}/expenses`, { headers: getAuthHeader() })),
     create: async (data: Partial<Expense>) => handleResponse(await fetch(`${API_URL}/expenses`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify(data) })),
     update: async (id: string, data: Partial<Expense>) => handleResponse(await fetch(`${API_URL}/expenses/${id}`, { method: 'PUT', headers: getAuthHeader(), body: JSON.stringify(data) })),
     delete: async (id: string) => handleResponse(await fetch(`${API_URL}/expenses/${id}`, { method: 'DELETE', headers: getAuthHeader() }))
   },
-  incoming: { 
+  incoming: {
     getAll: async (): Promise<IncomingPayment[]> => handleResponse(await fetch(`${API_URL}/incoming`, { headers: getAuthHeader() })),
     create: async (data: Partial<IncomingPayment>) => handleResponse(await fetch(`${API_URL}/incoming`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify(data) })),
     update: async (id: string, data: Partial<IncomingPayment>) => handleResponse(await fetch(`${API_URL}/incoming/${id}`, { method: 'PUT', headers: getAuthHeader(), body: JSON.stringify(data) })),
     delete: async (id: string) => handleResponse(await fetch(`${API_URL}/incoming/${id}`, { method: 'DELETE', headers: getAuthHeader() }))
   },
-  recurring: { 
+  recurring: {
     getAll: async (): Promise<RecurringItem[]> => handleResponse(await fetch(`${API_URL}/recurring`, { headers: getAuthHeader() })),
     create: async (data: Partial<RecurringItem>) => handleResponse(await fetch(`${API_URL}/recurring`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify(data) })),
     update: async (id: string, data: Partial<RecurringItem>) => handleResponse(await fetch(`${API_URL}/recurring/${id}`, { method: 'PUT', headers: getAuthHeader(), body: JSON.stringify(data) })),
     delete: async (id: string) => handleResponse(await fetch(`${API_URL}/recurring/${id}`, { method: 'DELETE', headers: getAuthHeader() }))
   },
-  users: { 
+  users: {
     getAll: async (): Promise<User[]> => handleResponse(await fetch(`${API_URL}/users`, { headers: getAuthHeader() })),
     create: async (data: Partial<User>) => handleResponse(await fetch(`${API_URL}/users`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify(data) })),
     update: async (id: string, data: Partial<User>) => handleResponse(await fetch(`${API_URL}/users/${id}`, { method: 'PUT', headers: getAuthHeader(), body: JSON.stringify(data) })),
     delete: async (id: string) => handleResponse(await fetch(`${API_URL}/users/${id}`, { method: 'DELETE', headers: getAuthHeader() }))
   },
-  clients: { 
+  clients: {
     getAll: async (): Promise<User[]> => {
       const users = await handleResponse(await fetch(`${API_URL}/users`, { headers: getAuthHeader() }));
       return users.filter((u: User) => u.role === 'Client');
     },
     create: async (data: Partial<User>) => handleResponse(await fetch(`${API_URL}/users`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify({ ...data, role: 'Client' }) })),
     update: async (id: string, data: Partial<User>) => handleResponse(await fetch(`${API_URL}/users/${id}`, { method: 'PUT', headers: getAuthHeader(), body: JSON.stringify(data) })),
-    delete: async (id: string) => handleResponse(await fetch(`${API_URL}/users/${id}`, { method: 'DELETE', headers: getAuthHeader() }))
+    delete: async (id: string) => handleResponse(await fetch(`${API_URL}/users/${id}`, { method: 'DELETE', headers: getAuthHeader() })),
+    export: async (id: string) => {
+      const res = await fetch(`${API_URL}/users/${id}/export`, { headers: getAuthHeader() });
+      if (!res.ok) throw new Error('Export failed');
+      return res.blob();
+    }
   },
-  // Added budgets API domain to resolve errors in BudgetPage
   budgets: {
     getAll: async (period?: string): Promise<Budget[]> => {
       const queryParams = new URLSearchParams();
@@ -231,17 +243,17 @@ export const api = {
       return handleResponse(res);
     },
     upsert: async (data: Partial<Budget>) => {
-      const res = await fetch(`${API_URL}/budgets`, { 
-        method: 'POST', 
-        headers: getAuthHeader(), 
-        body: JSON.stringify(data) 
+      const res = await fetch(`${API_URL}/budgets`, {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: JSON.stringify(data)
       });
       return handleResponse(res);
     },
     delete: async (id: string) => {
-      const res = await fetch(`${API_URL}/budgets/${id}`, { 
-        method: 'DELETE', 
-        headers: getAuthHeader() 
+      const res = await fetch(`${API_URL}/budgets/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeader()
       });
       return handleResponse(res);
     }

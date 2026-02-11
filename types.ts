@@ -26,12 +26,19 @@ export interface User {
   zipCode?: string;
 }
 
-export interface CloudMailSettings {
-  apiKey: string;
+export interface SmtpSettings {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  secure: boolean;
   senderName: string;
   senderEmail: string;
   isEnabled: boolean;
 }
+
+// Keeping CloudMailSettings alias for backward compatibility in some components if needed
+export type CloudMailSettings = SmtpSettings;
 
 export interface GeneralSettings {
   companyName: string;
@@ -69,6 +76,8 @@ export interface ExpenseItem {
   product: string;
   amount: number;
   tax: number;
+  taxType?: 'Exclusive' | 'Inclusive';
+  taxAmount?: number;
   subtotal: number;
   paid: number;
   due: number;
@@ -90,10 +99,15 @@ export interface Expense {
 }
 
 export interface IncomingItem {
+  id?: string;
   product: string;
-  amount: number;
+  hsnSac?: string;
+  quantity: number;
+  rate: number;
+  amount: number; // qty * rate
   taxRate: number;
   taxType: TaxType;
+  taxAmount: number;
   total: number;
 }
 
@@ -102,8 +116,10 @@ export interface IncomingPayment {
   date: string;
   client: string;
   category: string;
-  project?: string;
+  project: string;
   paymentType: 'One Time Payment' | 'Recurring';
+  taxType?: TaxType;
+  taxRate?: number;
   actualAmount: number;
   paidAmount: number;
   dueAmount: number;
@@ -120,8 +136,8 @@ export interface RecurringItem {
   type: 'Expense' | 'Income';
   frequency: 'Daily' | 'Weekly' | 'Monthly' | 'Yearly';
   amount: number;
-  taxRate: number;
-  taxType: TaxType;
+  taxRate?: number;
+  taxType?: TaxType;
   nextRunDate: string;
   status: 'Active' | 'Inactive';
 }
@@ -149,7 +165,6 @@ export interface DashboardMetrics {
   recentUsers: User[];
 }
 
-// Fix: Exporting Budget interface to resolve missing member error in Budget.tsx
 export interface Budget {
   id: string;
   category: string;

@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -19,6 +20,7 @@ app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true, parameterLimit: 50000 }));
 
 // Routes
+console.log('🛣️ Registering Routes...');
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/expenses', require('./routes/expenseRoutes'));
 app.use('/api/incoming', require('./routes/incomingRoutes'));
@@ -26,6 +28,7 @@ app.use('/api/recurring', require('./routes/recurringRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/settings', require('./routes/settingsRoutes'));
+console.log('✅ Routes Registered');
 
 // Start Job Scheduler
 require('./jobs/cron');
