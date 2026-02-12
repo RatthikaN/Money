@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  User, Globe, Mail, Share2, Shield, Check, Save, Loader2, Sparkles, Plus, Trash2, CheckCircle, Send, AlertCircle, Zap, CloudLightning, Phone, MapPin, Building2, CreditCard, Link as LinkIcon, Upload, Info, ShieldCheck, ShieldAlert, ExternalLink, QrCode, Copy, Key, Server
+  User, Globe, Mail, Share2, Shield, Check, Save, Loader2, Sparkles, Plus, Trash2, CheckCircle, Send, AlertCircle, Zap, CloudLightning, Phone, MapPin, Building2, CreditCard, Link as LinkIcon, Upload, Info, ShieldCheck, ShieldAlert, ExternalLink, QrCode, Key, Server, Bell
 } from 'lucide-react';
 import { api, currencySymbols, timezones } from '../services/api';
 import { GeneralSettings, SmtpSettings, SocialSettings, PersonalSettings, CustomLink } from '../types';
 import { Modal } from '../components/Modal';
 import { SmtpGuide } from '../components/SmtpGuide';
 import { aiService } from '../services/aiService';
+import { subscribeUserToPush, unsubscribeUserFromPush, checkPushSubscription } from '../services/pushSubscription';
 
 type TabType = 'General' | 'Smtp' | 'Personal' | 'Security' | 'Social';
 
@@ -25,9 +26,9 @@ export const Settings: React.FC = () => {
   const [isSmtpGuideOpen, setIsSmtpGuideOpen] = useState(false);
   const [twoFaStep, setTwoFaStep] = useState<1 | 2 | 3>(1);
   const [verificationCode, setVerificationCode] = useState('');
-  const [recoveryCodes] = useState(['ABCD-1234', 'EFGH-5678', 'IJKL-9012']);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [totpSecret, setTotpSecret] = useState('');
+  const [pushEnabled, setPushEnabled] = useState(false);
 
   // Password Change State
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -57,6 +58,14 @@ export const Settings: React.FC = () => {
   }, []);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  useEffect(() => {
+    const checkPush = async () => {
+      const isSubscribed = await checkPushSubscription();
+      setPushEnabled(isSubscribed);
+    };
+    checkPush();
+  }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -133,6 +142,25 @@ export const Settings: React.FC = () => {
       setSaveStatus({ type: 'error', message: e.message || 'SMTP Test Failed' });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleTogglePush = async () => {
+    try {
+      if (pushEnabled) {
+        await unsubscribeUserFromPush();
+        setPushEnabled(false);
+        setSaveStatus({ type: 'success', message: 'Push notifications disabled' });
+      } else {
+        await subscribeUserToPush();
+        setPushEnabled(true);
+        setSaveStatus({ type: 'success', message: 'Push notifications enabled!' });
+      }
+    } catch (error: any) {
+      console.error("Push toggle error:", error);
+      setSaveStatus({ type: 'error', message: error.message || 'Failed to update push settings' });
+    } finally {
+      setTimeout(() => setSaveStatus(null), 4000);
     }
   };
 
@@ -417,19 +445,31 @@ export const Settings: React.FC = () => {
                   {personal.twoFactorEnabled && (
                     <div className="p-5 bg-white">
                       <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
-                        <h4 className="text-sm font-black text-indigo-900 mb-2">Recovery Backup Codes</h4>
-                        <p className="text-xs font-bold text-indigo-600 mb-4 opacity-70 leading-relaxed">Keep these codes in a safe place. They allow access if you lose your authenticator.</p>
-                        <div className="grid grid-cols-2 gap-2 mb-4">
-                          {recoveryCodes.map(code => (
-                            <div key={code} className="bg-white px-3 py-2 rounded-lg border border-indigo-200 text-center text-xs font-mono font-black text-indigo-900 shadow-sm">{code}</div>
-                          ))}
-                        </div>
-                        <button type="button" className="flex items-center gap-2 text-[10px] font-black text-indigo-700 uppercase tracking-widest hover:text-indigo-900 transition-colors">
-                          <Copy size={12} /> Copy to Clipboard
-                        </button>
+                        <p className="text-xs font-bold text-indigo-600 opacity-70 leading-relaxed">Two-factor authentication is active. You will be prompted for a 6-digit code from your authenticator app during login.</p>
                       </div>
                     </div>
                   )}
+                </div>
+
+                <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="bg-gray-50 p-5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-xl ${pushEnabled ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-gray-400 border border-gray-200'}`}>
+                        <Bell size={20} />
+                      </div>
+                      <div>
+                        <h3 className="font-black text-gray-900 leading-tight">Push Notifications</h3>
+                        <p className="text-xs font-bold text-gray-400">Receive real-time alerts in your browser</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleTogglePush}
+                      className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${pushEnabled ? 'bg-orange-600' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${pushEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
                 </div>
               </div>
 

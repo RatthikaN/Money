@@ -13,16 +13,29 @@ const mailService = {
   send: async ({ to, subject, text, html }) => {
     try {
       const config = await Setting.findByPk('cloudmail');
-      
+      console.log('🔍 [Mail] Fetched config from DB. Raw Type:', typeof (config ? config.value : 'NULL'));
+
       if (!config || !config.value) {
         console.log('⚠️ [Mail] ERROR: No SMTP configuration found in the database.');
         return { success: false, message: 'SMTP configuration missing.' };
       }
 
-      const { host, port, username, password, secure, senderName, senderEmail, isEnabled } = config.value;
+      // Defensive Parsing: Some database dialects return JSON as string
+      let smtpConfig = config.value;
+      if (typeof smtpConfig === 'string') {
+        try {
+          smtpConfig = JSON.parse(smtpConfig);
+          console.log('✨ [Mail] Config parsed from JSON string.');
+        } catch (e) {
+          console.error('❌ [Mail] Failed to parse config JSON string:', e.message);
+          return { success: false, message: 'Invalid SMTP configuration format.' };
+        }
+      }
+
+      const { host, port, username, password, secure, senderName, senderEmail, isEnabled } = smtpConfig;
 
       if (!isEnabled) {
-        console.log('⚠️ [Mail] INFO: Delivery bypassed. Master Switch is OFF.');
+        console.log('⚠️ [Mail] INFO: Delivery bypassed. Master Switch (isEnabled) is:', isEnabled);
         return { success: false, message: 'Mail delivery is disabled.' };
       }
 
@@ -43,7 +56,7 @@ const mailService = {
         },
         // Support older SMTP servers if needed
         tls: {
-            rejectUnauthorized: false
+          rejectUnauthorized: false
         }
       });
 
@@ -88,7 +101,7 @@ const mailService = {
           pass: password
         },
         tls: {
-            rejectUnauthorized: false
+          rejectUnauthorized: false
         }
       });
 

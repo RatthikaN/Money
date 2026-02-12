@@ -72,19 +72,24 @@ exports.updateSection = async (req, res) => {
       return res.json({ message: 'Profile updated successfully', data: { name: user.name, email: user.email, twoFactorEnabled: user.twoFactorEnabled } });
     }
 
-    let setting = await Setting.findByPk(cleanSection);
+    // Handle Generic Settings Sections
+    // Using FindOne + Save which is more reliable for JSON types in some Sequelize environments
+    let settingRecord = await Setting.findByPk(cleanSection);
 
-    if (setting) {
-      setting.value = data;
-      await setting.save();
+    if (settingRecord) {
+      settingRecord.value = data;
+      await settingRecord.save();
     } else {
-      setting = await Setting.create({
+      await Setting.create({
         key: cleanSection,
         value: data
       });
     }
 
-    res.json({ message: `${section} settings saved successfully`, data: setting.value });
+    res.json({
+      message: `${section} settings saved successfully`,
+      data: data
+    });
   } catch (error) {
     console.error(`❌ [Settings] Update Failure (${req.params.section}):`, error);
     res.status(500).json({ message: 'Database storage failure', details: error.message });

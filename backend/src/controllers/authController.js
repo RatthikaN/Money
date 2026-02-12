@@ -3,39 +3,62 @@ const User = require('../models/User');
 const Setting = require('../models/Setting');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const mailService = require('../services/mailService');
+const { Op } = require('sequelize');
+
+// Helper to generate 6-digit OTP
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 exports.login = async (req, res) => {
-  const { email, password, code } = req.body;
+  const { email, password, otp } = req.body;
   console.log(`\n🔑 Login Attempt received for: ${email}`);
 
   try {
     const user = await User.findOne({ where: { email } });
 
     if (!user) {
-      console.log(`❌ Login Failed: User with email ${email} NOT FOUND in database.`);
-      return res.status(400).json({ message: 'Invalid credentials (User not found)' });
+      console.log(`❌ Login Failed: User with email ${email} NOT FOUND.`);
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    if (!user.isVerified) {
+      console.log(`⚠️ Login Blocked: Email not verified for ${email}`);
+      return res.status(403).json({ message: 'Please verify your email first', needsVerification: true });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       console.log(`❌ Login Failed: Password incorrect for ${email}`);
-      return res.status(400).json({ message: 'Invalid credentials (Wrong password)' });
+      return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // 2FA Check
+    // 2FA Check (Email OTP)
     if (user.twoFactorEnabled) {
-      if (!code) {
-        console.log(`ℹ️ 2FA Required for ${email}`);
-        return res.json({ twoFactorRequired: true }); // Client should prompt for code
+      if (!otp) {
+        const code = generateOTP();
+        user.otpCode = code;
+        user.otpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+        await user.save();
+
+        await mailService.send({
+          to: user.email,
+          subject: 'Your Login Verification Code',
+          html: `<p>Your verification code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
+        });
+
+        console.log(`ℹ️ 2FA OTP sent to ${email}`);
+        return res.json({ twoFactorRequired: true });
       }
 
-      const { authenticator } = require('otplib');
-      const isValid = authenticator.check(code, user.twoFactorSecret);
-
-      if (!isValid) {
-        console.log(`❌ 2FA Failed: Invalid Code for ${email}`);
-        return res.status(400).json({ message: 'Invalid 2FA Code' });
+      if (user.otpCode !== otp || user.otpExpires < new Date()) {
+        console.log(`❌ 2FA Failed: Invalid or Expired OTP for ${email}`);
+        return res.status(400).json({ message: 'Invalid or expired OTP' });
       }
+
+      // Clear OTP after success
+      user.otpCode = null;
+      user.otpExpires = null;
+      await user.save();
     }
 
     console.log(`✅ Login Successful for ${email} (${user.role})`);
@@ -49,90 +72,137 @@ exports.login = async (req, res) => {
 };
 
 exports.register = async (req, res) => {
-  const {
-    name, email, password, role,
-    companyName, companyAddress, city, state, zipCode, gstNumber, phoneNumber
-  } = req.body;
+  const { name, email, password, role } = req.body;
 
   try {
-    // 1. Check if user already exists
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
+      if (!existingUser.isVerified) {
+        // Allow re-registration/OTP resend if not verified
+        const code = generateOTP();
+        existingUser.otpCode = code;
+        existingUser.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
+        await existingUser.save();
+
+        await mailService.send({
+          to: email,
+          subject: 'Verify Your Email',
+          html: `<p>Your verification code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
+        });
+        return res.status(200).json({ message: 'Existing unverified user. New OTP sent.', needsVerification: true });
+      }
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // 2. Create User
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
+    const code = generateOTP();
 
-    // Explicitly select fields to avoid passing unknowns to Sequelize
     const newUser = await User.create({
       name,
       email,
       password: hashedPassword,
       role: role || 'Manager',
-      status: 'Active'
+      status: 'Active',
+      isVerified: false,
+      otpCode: code,
+      otpExpires: new Date(Date.now() + 5 * 60 * 1000)
     });
 
-    console.log(`✅ User created: ${newUser.email}`);
-
-    // 3. Save Settings (Business & General) if provided
-    // We wrap this in a try/catch so user creation doesn't fail if settings fail
-    if (companyName) {
-      try {
-        const fullAddress = [companyAddress, city, state, zipCode].filter(Boolean).join(', ');
-
-        // Save Business Settings
-        await Setting.upsert({
-          key: 'business',
-          value: {
-            businessName: companyName,
-            taxId: gstNumber || '',
-            address: fullAddress
-          }
-        });
-
-        // Save General Settings
-        await Setting.upsert({
-          key: 'general',
-          value: {
-            companyName: companyName,
-            email: email, // Official email
-            phoneNumber: phoneNumber || '',
-            address: fullAddress,
-            currency: 'USD',
-            timezone: 'UTC',
-            dateFormat: 'YYYY-MM-DD'
-          }
-        });
-
-        // Save Personal Settings
-        await Setting.upsert({
-          key: 'personal',
-          value: {
-            name: name,
-            email: email,
-            twoFactorEnabled: false
-          }
-        });
-        console.log(`✅ Default settings configured for ${companyName}`);
-      } catch (settingsError) {
-        console.error("⚠️ Failed to save default settings:", settingsError.message);
-        // We do NOT return error here, as the user account is already created.
-      }
-    }
-
-    res.status(201).json({
-      message: 'User registered successfully',
-      user: { id: newUser.id, name: newUser.name, email: newUser.email }
+    await mailService.send({
+      to: email,
+      subject: 'Verify Your Email',
+      html: `<p>Thank you for signing up! Your verification code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
     });
+
+    res.status(201).json({ message: 'Registration successful. OTP sent to email.', needsVerification: true });
 
   } catch (error) {
     console.error("❌ Registration Error:", error);
-    // Return the specific error message to the frontend
-    res.status(500).json({
-      message: 'Error registering user',
-      error: error.message || 'Unknown server error'
+    res.status(500).json({ message: 'Error registering user', error: error.message });
+  }
+};
+
+exports.verifyOTP = async (req, res) => {
+  const { email, otp } = req.body;
+  try {
+    const user = await User.findOne({ where: { email, otpCode: otp, otpExpires: { [Op.gt]: new Date() } } });
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired OTP' });
+    }
+
+    user.isVerified = true;
+    user.otpCode = null;
+    user.otpExpires = null;
+    await user.save();
+
+    res.json({ message: 'Email verified successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error verifying OTP' });
+  }
+};
+
+exports.resendOTP = async (req, res) => {
+  const { email } = req.body;
+  try {
+    const user = await User.findOne({ where: { email } });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const code = generateOTP();
+    user.otpCode = code;
+    user.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
+    await user.save();
+
+    await mailService.send({
+      to: email,
+      subject: 'Your Verification Code',
+      html: `<p>Your new verification code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
     });
+
+    res.json({ message: 'OTP resent successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error resending OTP' });
+  }
+};
+
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body;
+  try {
+    const user = await User.findOne({ where: { email } });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const code = generateOTP();
+    user.otpCode = code;
+    user.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
+    await user.save();
+
+    await mailService.send({
+      to: email,
+      subject: 'Password Reset Code',
+      html: `<p>Your password reset code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
+    });
+
+    res.json({ message: 'Password reset code sent' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error sending reset code' });
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  const { email, otp, newPassword } = req.body;
+  try {
+    const user = await User.findOne({ where: { email, otpCode: otp, otpExpires: { [Op.gt]: new Date() } } });
+    if (!user) return res.status(400).json({ message: 'Invalid or expired OTP' });
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    user.otpCode = null;
+    user.otpExpires = null;
+    user.isVerified = true; // Ensure user is verified after successful reset
+    await user.save();
+
+    res.json({ message: 'Password reset successful' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error resetting password' });
   }
 };

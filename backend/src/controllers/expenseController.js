@@ -1,7 +1,8 @@
 const Expense = require('../models/Expense');
 const ExpenseItem = require('../models/ExpenseItem');
 const User = require('../models/User');
-const { sendPushNotification } = require('../services/notificationService');
+const Notification = require('../models/Notification');
+const pushService = require('../services/pushService');
 
 exports.getExpenses = async (req, res) => {
   try {
@@ -38,16 +39,23 @@ exports.createExpense = async (req, res) => {
       ));
     }
 
-    // Trigger push notification to the user
-    // ... (existing notification logic) ...
+    // Send Real-time Push Notification
     const user = await User.findByPk(req.user.id);
     if (user && user.pushSubscription) {
-      sendPushNotification(user.pushSubscription, {
+      await pushService.sendNotification(user.pushSubscription, {
         title: 'Expense Recorded 💸',
-        body: `Successfully recorded ${expense.name} for $${expense.actualAmount}.`,
-        url: '/#/expenses'
+        body: `Recorded ${expense.name}: ${expense.actualAmount}`,
+        icon: '/logo192.png'
       });
     }
+
+    // Create internal database notification
+    await Notification.create({
+      title: 'Expense Recorded 💸',
+      message: `Successfully recorded ${expense.name} for ${expense.actualAmount}.`,
+      type: 'Success',
+      userId: req.user.id
+    });
 
     const createdExpense = await Expense.findByPk(expense.id, { include: [{ model: ExpenseItem, as: 'items' }] });
     res.status(201).json(createdExpense);

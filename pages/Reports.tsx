@@ -1,6 +1,5 @@
-
-import React, { useState, useRef } from 'react';
-import { Download, FileText, Printer, FileSpreadsheet, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Download, FileText, Printer, FileSpreadsheet, Loader2, ArrowUpRight, ArrowDownRight, DollarSign, Activity, Zap } from 'lucide-react';
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { api, getCurrencySymbol } from '../services/api';
@@ -10,6 +9,8 @@ export const Reports: React.FC = () => {
   const [reportType, setReportType] = useState('Profit & Loss');
   const [dateRange, setDateRange] = useState('This Month');
   const [reportData, setReportData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [summary, setSummary] = useState({ income: 0, expenses: 0, profit: 0 });
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -17,12 +18,10 @@ export const Reports: React.FC = () => {
   const currency = getCurrencySymbol();
 
   const fetchRealData = async () => {
-    // 1. Fetch ALL real data
     const [expenses, incoming] = await Promise.all([
       api.expenses.getAll(),
       api.incoming.getAll()
     ]);
-
     return { expenses, incoming };
   };
 
@@ -44,98 +43,100 @@ export const Reports: React.FC = () => {
       }
       if (range === 'This Year') return itemYear === currentYear;
       if (range === 'Date Wise') {
-        if (!customStartDate || !customEndDate) return true; // Show all if dates not selected
+        if (!customStartDate || !customEndDate) return true;
         const start = new Date(customStartDate);
         const end = new Date(customEndDate);
-        end.setHours(23, 59, 59, 999); // Include the end date fully
+        end.setHours(23, 59, 59, 999);
         return itemDate >= start && itemDate <= end;
       }
-      return true; // All time
+      return true;
     });
   };
 
-  const handleGeneratePreview = async () => {
-    setReportData(null); // Reset
-    const { expenses, incoming } = await fetchRealData();
+  const handleGeneratePreview = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { expenses, incoming } = await fetchRealData();
 
-    // Filter data based on range
-    const filteredExpenses = filterByDate(expenses, 'date', dateRange);
-    const filteredIncoming = filterByDate(incoming, 'date', dateRange);
+      const filteredExpenses = filterByDate(expenses, 'date', dateRange);
+      const filteredIncoming = filterByDate(incoming, 'date', dateRange);
 
-    if (reportType === 'Balance Sheet') {
-      // Calculate Real Balance Sheet Metrics
-      const totalIncomePaid = incoming.reduce((acc, i) => acc + (i.paidAmount || 0), 0);
-      const totalExpensesPaid = expenses.reduce((acc, i) => acc + (i.paidAmount || 0), 0);
+      // Update Summary Bar
+      const totalInc = filteredIncoming.reduce((acc, i) => acc + (i.actualAmount || 0), 0);
+      const totalExp = filteredExpenses.reduce((acc, i) => acc + (i.actualAmount || 0), 0);
+      setSummary({ income: totalInc, expenses: totalExp, profit: totalInc - totalExp });
 
-      const cashOnHand = totalIncomePaid - totalExpensesPaid;
-      const accountsReceivable = incoming.reduce((acc, i) => acc + ((i.actualAmount || 0) - (i.paidAmount || 0)), 0);
-      const accountsPayable = expenses.reduce((acc, i) => acc + ((i.actualAmount || 0) - (i.paidAmount || 0)), 0);
+      if (reportType === 'Balance Sheet') {
+        const totalIncomePaid = incoming.reduce((acc, i) => acc + (i.paidAmount || 0), 0);
+        const totalExpensesPaid = expenses.reduce((acc, i) => acc + (i.paidAmount || 0), 0);
+        const cashOnHand = totalIncomePaid - totalExpensesPaid;
+        const accountsReceivable = incoming.reduce((acc, i) => acc + ((i.actualAmount || 0) - (i.paidAmount || 0)), 0);
+        const accountsPayable = expenses.reduce((acc, i) => acc + ((i.actualAmount || 0) - (i.paidAmount || 0)), 0);
+        const totalAssets = cashOnHand + accountsReceivable;
+        const totalLiabilities = accountsPayable;
+        const equity = totalAssets - totalLiabilities;
 
-      // Simplified Equity: Assets - Liabilities
-      const totalAssets = cashOnHand + accountsReceivable;
-      const totalLiabilities = accountsPayable;
-      const equity = totalAssets - totalLiabilities;
+        setReportData({
+          type: 'Balance Sheet',
+          period: dateRange + ' (Real-time)',
+          assets: totalAssets,
+          liabilities: totalLiabilities,
+          equity: equity,
+          breakdown: [
+            { category: 'Cash / Bank (Received - Paid)', amount: cashOnHand },
+            { category: 'Accounts Receivable (Due Income)', amount: accountsReceivable },
+            { category: 'Accounts Payable (Due Expenses)', amount: accountsPayable },
+          ]
+        });
+      } else if (reportType === 'Incoming') {
+        setReportData({
+          type: 'Incoming Report',
+          period: dateRange,
+          items: filteredIncoming,
+          total: totalInc
+        });
+      } else if (reportType === 'Expenses') {
+        setReportData({
+          type: 'Expenses Report',
+          period: dateRange,
+          items: filteredExpenses,
+          total: totalExp
+        });
+      } else {
+        const incomeByClient: Record<string, number> = {};
+        filteredIncoming.forEach(i => {
+          const client = i.client || 'Unknown';
+          incomeByClient[client] = (incomeByClient[client] || 0) + (i.actualAmount || 0);
+        });
 
-      setReportData({
-        type: 'Balance Sheet',
-        period: dateRange + ' (Real-time)',
-        assets: totalAssets,
-        liabilities: totalLiabilities,
-        equity: equity,
-        breakdown: [
-          { category: 'Cash / Bank (Received - Paid)', amount: cashOnHand },
-          { category: 'Accounts Receivable (Due Income)', amount: accountsReceivable },
-          { category: 'Accounts Payable (Due Expenses)', amount: accountsPayable },
-        ]
-      });
-    } else if (reportType === 'Incoming') {
-      // Just list the incoming records
-      setReportData({
-        type: 'Incoming Report',
-        period: dateRange,
-        items: filteredIncoming,
-        total: filteredIncoming.reduce((sum: number, i: any) => sum + (i.actualAmount || 0), 0)
-      });
-    } else if (reportType === 'Expenses') {
-      // Just list the expense records
-      setReportData({
-        type: 'Expenses Report',
-        period: dateRange,
-        items: filteredExpenses,
-        total: filteredExpenses.reduce((sum: number, i: any) => sum + (i.actualAmount || 0), 0)
-      });
-    } else {
-      // Profit & Loss (Default)
-      const totalIncome = filteredIncoming.reduce((acc, i) => acc + (i.actualAmount || 0), 0);
-      const totalExpense = filteredExpenses.reduce((acc, i) => acc + (i.actualAmount || 0), 0);
+        const expensesByShop: Record<string, number> = {};
+        filteredExpenses.forEach(e => {
+          const shop = e.shop || 'Unknown';
+          expensesByShop[shop] = (expensesByShop[shop] || 0) + (e.actualAmount || 0);
+        });
 
-      // Group Income by Client
-      const incomeByClient: Record<string, number> = {};
-      filteredIncoming.forEach(i => {
-        const client = i.client || 'Unknown';
-        incomeByClient[client] = (incomeByClient[client] || 0) + (i.actualAmount || 0);
-      });
-
-      // Group Expenses by Shop (as category proxy)
-      const expensesByShop: Record<string, number> = {};
-      filteredExpenses.forEach(e => {
-        const shop = e.shop || 'Unknown';
-        expensesByShop[shop] = (expensesByShop[shop] || 0) + (e.actualAmount || 0);
-      });
-
-      setReportData({
-        type: 'Profit & Loss',
-        period: dateRange,
-        totalIncome: totalIncome,
-        totalExpenses: totalExpense,
-        netProfit: totalIncome - totalExpense,
-        incomeBreakdown: incomeByClient,
-        expenseBreakdown: expensesByShop,
-        detailedIncome: filteredIncoming,
-        detailedExpenses: filteredExpenses
-      });
+        setReportData({
+          type: 'Profit & Loss',
+          period: dateRange,
+          totalIncome: totalInc,
+          totalExpenses: totalExp,
+          netProfit: totalInc - totalExp,
+          incomeBreakdown: incomeByClient,
+          expenseBreakdown: expensesByShop,
+          detailedIncome: filteredIncoming,
+          detailedExpenses: filteredExpenses
+        });
+      }
+    } catch (err) {
+      console.error("Report Generation Error:", err);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [reportType, dateRange, customStartDate, customEndDate]);
+
+  useEffect(() => {
+    handleGeneratePreview();
+  }, [handleGeneratePreview]);
 
   const handlePrint = () => {
     window.print();
@@ -196,17 +197,67 @@ export const Reports: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Financial Reports</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-gray-900">Financial Reports</h1>
+          {/* <div className="flex items-center gap-1.5 px-2.5 py-1 bg-green-50 text-green-700 rounded-full border border-green-100 animate-pulse">
+            <Zap size={12} fill="currentColor" />
+            <span className="text-[10px] font-black uppercase tracking-wider">Live Data</span>
+          </div> */}
+        </div>
         <div className="flex space-x-2 w-full sm:w-auto">
-          <button onClick={handlePrint} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-50">
+          <button onClick={handlePrint} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-50 transition-colors">
             <Printer size={18} /> <span>Print</span>
           </button>
-          <button onClick={handleExportCSV} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+          <button onClick={handleExportCSV} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
             <FileSpreadsheet size={18} /> <span>Excel</span>
           </button>
-          <button onClick={handleExportPDF} disabled={isGeneratingPdf} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-70">
+          <button onClick={handleExportPDF} disabled={isGeneratingPdf} className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-70 transition-colors">
             {isGeneratingPdf ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />} <span>PDF</span>
           </button>
+        </div>
+      </div>
+
+      {/* Real-time Summary Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 overflow-hidden relative group">
+          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
+            <ArrowUpRight size={24} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Income</p>
+            <h3 className="text-xl font-black text-gray-900">{currency}{summary.income.toLocaleString()}</h3>
+          </div>
+          <div className="absolute top-0 right-0 p-2 opacity-5">
+            <Activity size={64} />
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 overflow-hidden relative group">
+          <div className="p-3 bg-red-50 text-red-600 rounded-xl group-hover:scale-110 transition-transform">
+            <ArrowDownRight size={24} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Expenses</p>
+            <h3 className="text-xl font-black text-gray-900">{currency}{summary.expenses.toLocaleString()}</h3>
+          </div>
+          <div className="absolute top-0 right-0 p-2 opacity-5">
+            <Activity size={64} />
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 overflow-hidden relative group">
+          <div className={`p-3 rounded-xl group-hover:scale-110 transition-transform ${summary.profit >= 0 ? 'bg-green-50 text-green-600' : 'bg-orange-50 text-orange-600'}`}>
+            <DollarSign size={24} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Net Profit</p>
+            <h3 className={`text-xl font-black ${summary.profit >= 0 ? 'text-green-700' : 'text-orange-700'}`}>
+              {currency}{summary.profit.toLocaleString()}
+            </h3>
+          </div>
+          <div className="absolute top-0 right-0 p-2 opacity-5">
+            <Zap size={64} />
+          </div>
         </div>
       </div>
 
@@ -238,8 +289,13 @@ export const Reports: React.FC = () => {
             )}
           </div>
           <div className="flex items-end">
-            <button onClick={handleGeneratePreview} className="w-full bg-gray-900 text-white py-2 rounded-lg hover:bg-gray-800 flex items-center justify-center space-x-2">
-              <FileText size={18} /> <span>Generate Real-time Preview</span>
+            <button
+              onClick={handleGeneratePreview}
+              disabled={loading}
+              className="w-full bg-gray-900 text-white py-2 rounded-lg hover:bg-gray-800 flex items-center justify-center space-x-2 transition-all disabled:opacity-70"
+            >
+              {loading ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} className="text-yellow-400" />}
+              <span>{loading ? 'Synchronizing...' : 'Generate Real-time Preview'}</span>
             </button>
           </div>
         </div>

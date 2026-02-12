@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { DashboardMetrics, Expense, IncomingPayment, RecurringItem, User, GeneralSettings, SmtpSettings, SocialSettings, PersonalSettings, Budget } from '../types';
+import { DashboardMetrics, Expense, IncomingPayment, RecurringItem, User, GeneralSettings, SmtpSettings, SocialSettings, PersonalSettings, Budget, Notification } from '../types';
 
 const API_URL = "http://localhost:5000/api";
 
@@ -55,7 +55,7 @@ export const timezones = [
   "Asia/Seoul", "Australia/Perth", "Australia/Adelaide", "Australia/Sydney", "Australia/Brisbane", "Pacific/Auckland", "Pacific/Fiji"
 ];
 
-const defaultGeneral: GeneralSettings = { companyName: 'MoneyFlow Inc.', email: 'admin@moneyflow.com', currency: 'USD', timezone: 'UTC', dateFormat: 'YYYY-MM-DD', taxId: '' };
+const defaultGeneral: GeneralSettings = { companyName: '', email: '', currency: 'USD', timezone: 'UTC', dateFormat: 'YYYY-MM-DD', taxId: '' };
 const defaultSmtp: SmtpSettings = { host: 'smtp.gmail.com', port: 587, username: '', password: '', secure: false, senderName: 'MoneyFlow Admin', senderEmail: '', isEnabled: false };
 const defaultSocial: SocialSettings = { website: '', facebook: '', twitter: '', linkedin: '', instagram: '', customLinks: [] };
 const defaultPersonal: PersonalSettings = { name: 'Demo Admin', email: 'demo@demo.com', twoFactorEnabled: false };
@@ -133,16 +133,48 @@ const fetchSetting = async <T>(section: string, defaultData: T): Promise<T> => {
 
 export const api = {
   auth: {
-    login: async (email: string, password: string, code?: string) => {
+    login: async (email: string, password: string, otp?: string) => {
       const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, code }),
+        body: JSON.stringify({ email, password, otp }),
       });
       return handleResponse(res);
     },
     register: async (data: any) => {
       const res = await fetch(`${API_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return handleResponse(res);
+    },
+    verifyOTP: async (email: string, otp: string) => {
+      const res = await fetch(`${API_URL}/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp }),
+      });
+      return handleResponse(res);
+    },
+    resendOTP: async (email: string) => {
+      const res = await fetch(`${API_URL}/auth/resend-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      return handleResponse(res);
+    },
+    forgotPassword: async (email: string) => {
+      const res = await fetch(`${API_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      return handleResponse(res);
+    },
+    resetPassword: async (data: any) => {
+      const res = await fetch(`${API_URL}/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -257,5 +289,12 @@ export const api = {
       });
       return handleResponse(res);
     }
+  },
+  notifications: {
+    getAll: async (): Promise<Notification[]> => handleResponse(await fetch(`${API_URL}/notifications`, { headers: getAuthHeader() })),
+    markRead: async (id: string) => handleResponse(await fetch(`${API_URL}/notifications/${id}/read`, { method: 'PUT', headers: getAuthHeader() })),
+    markAllRead: async () => handleResponse(await fetch(`${API_URL}/notifications/read-all`, { method: 'PUT', headers: getAuthHeader() })),
+    delete: async (id: string) => handleResponse(await fetch(`${API_URL}/notifications/${id}`, { method: 'DELETE', headers: getAuthHeader() })),
+    subscribe: async (subscription: any) => handleResponse(await fetch(`${API_URL}/notifications/subscribe`, { method: 'POST', headers: getAuthHeader(), body: JSON.stringify({ subscription }) }))
   }
 };

@@ -30,6 +30,10 @@ const User = sequelize.define('User', {
     type: DataTypes.ENUM('Active', 'Inactive'),
     defaultValue: 'Active'
   },
+  isVerified: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
+  },
   // New Client Fields
   phoneNumber: {
     type: DataTypes.STRING,

@@ -1,5 +1,8 @@
 const Incoming = require('../models/Incoming');
 const IncomingItem = require('../models/IncomingItem');
+const Notification = require('../models/Notification');
+const User = require('../models/User');
+const pushService = require('../services/pushService');
 
 exports.getIncoming = async (req, res) => {
   try {
@@ -22,6 +25,23 @@ exports.createIncoming = async (req, res) => {
       await Promise.all(items.map(item =>
         IncomingItem.create({ ...item, IncomingId: incoming.id })
       ));
+    }
+    // Create internal database notification
+    await Notification.create({
+      title: 'Income Recorded 📈',
+      message: `Successfully recorded income from ${incoming.client} for ${incoming.actualAmount}.`,
+      type: 'Success',
+      userId: req.user.id
+    });
+
+    // Send Real-time Push Notification
+    const user = await User.findByPk(req.user.id);
+    if (user && user.pushSubscription) {
+      await pushService.sendNotification(user.pushSubscription, {
+        title: 'Income Recorded 📈',
+        body: `Income from ${incoming.client}: ${incoming.actualAmount}`,
+        icon: '/logo192.png'
+      });
     }
 
     const createdIncoming = await Incoming.findByPk(incoming.id, {

@@ -28,6 +28,7 @@ app.use('/api/recurring', require('./routes/recurringRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/settings', require('./routes/settingsRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 console.log('✅ Routes Registered');
 
 // Start Job Scheduler

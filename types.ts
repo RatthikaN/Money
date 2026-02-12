@@ -90,6 +90,7 @@ export interface Expense {
   shop: string;
   category: string;
   product?: string;
+  client?: string;
   actualAmount: number;
   paidAmount: number;
   dueAmount: number;
@@ -171,4 +172,14 @@ export interface Budget {
   limit: number;
   period: string; // Format: YYYY-MM
   spent: number;
+}
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'Info' | 'Success' | 'Warning' | 'Error';
+  status: 'Unread' | 'Read';
+  userId: number;
+  createdAt: string;
 }

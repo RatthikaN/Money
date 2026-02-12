@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, Eye, Edit2, Trash2, X, Upload, Paperclip, FileText, Sparkles, Loader2, Key, AlertTriangle } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { api, useCurrency, compressImage } from '../services/api';
-import { Expense, ExpenseItem, Attachment } from '../types';
+import { Expense, ExpenseItem, Attachment, User } from '../types';
 import { aiService } from '../services/aiService';
 
 const sanitizeAmount = (val: any): number => {
@@ -41,10 +41,21 @@ export const Expenses: React.FC = () => {
   const [items, setItems] = useState<ExpenseItem[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [clients, setClients] = useState<User[]>([]);
 
   useEffect(() => {
     loadExpenses();
+    loadClients();
   }, []);
+
+  const loadClients = async () => {
+    try {
+      const data = await api.clients.getAll();
+      setClients(data);
+    } catch (e) {
+      console.error("Failed to load clients", e);
+    }
+  };
 
   const loadExpenses = async () => {
     const data = await api.expenses.getAll();
@@ -273,6 +284,7 @@ export const Expenses: React.FC = () => {
                 <th className="px-6 py-4">Date</th>
                 <th className="px-6 py-4">Name</th>
                 <th className="px-6 py-4">Shop</th>
+                <th className="px-6 py-4">Client</th>
                 <th className="px-6 py-4 text-right">Actual</th>
                 <th className="px-6 py-4 text-right">Paid</th>
                 <th className="px-6 py-4 text-right">Due</th>
@@ -286,6 +298,15 @@ export const Expenses: React.FC = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-gray-500">{exp.date}</td>
                   <td className="px-6 py-4 font-bold text-gray-900 whitespace-nowrap">{exp.name}</td>
                   <td className="px-6 py-4 text-gray-600 whitespace-nowrap">{exp.shop}</td>
+                  <td className="px-6 py-4 text-gray-400 whitespace-nowrap">
+                    {exp.client ? (
+                      <span className="bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-lg text-xs font-bold border border-indigo-100 italic">
+                        {exp.client}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300 italic">General</span>
+                    )}
+                  </td>
                   <td className="px-6 py-4 text-right font-medium whitespace-nowrap">{currency}{Number(exp.actualAmount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 text-right text-green-600 font-bold whitespace-nowrap">{currency}{Number(exp.paidAmount || 0).toLocaleString()}</td>
                   <td className="px-6 py-4 text-right text-red-600 font-bold whitespace-nowrap">{currency}{Number(exp.dueAmount || 0).toLocaleString()}</td>
@@ -321,6 +342,15 @@ export const Expenses: React.FC = () => {
             <div>
               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Date</label>
               <input required disabled={isViewMode} type="date" className="w-full border border-gray-200 rounded-xl p-3 focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all disabled:bg-gray-50" value={formData.date || ''} onChange={e => setFormData({ ...formData, date: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Associated Client</label>
+              <select disabled={isViewMode} className="w-full border border-gray-200 rounded-xl p-3 bg-white disabled:bg-gray-50 font-bold" value={formData.client || ''} onChange={e => setFormData({ ...formData, client: e.target.value })}>
+                <option value="">General (No Client)</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Status</label>

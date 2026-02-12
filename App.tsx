@@ -15,6 +15,7 @@ import { Reports } from './pages/Reports';
 import { Users } from './pages/Users';
 import { Settings } from './pages/Settings';
 import { Clients } from './pages/Clients';
+import { ForgotPassword } from './pages/ForgotPassword';
 // import { BudgetPage } from './pages/Budget';
 
 // Private Route Wrapper
@@ -29,7 +30,8 @@ const App: React.FC = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<SignUp />} />
-        
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+
         {/* Protected Routes */}
         <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
         <Route path="/expenses" element={<PrivateRoute><Expenses /></PrivateRoute>} />

@@ -19,6 +19,10 @@ const Expense = sequelize.define('Expense', {
     type: DataTypes.STRING,
     allowNull: false
   },
+  client: {
+    type: DataTypes.STRING,
+    allowNull: true // Optional for general expenses, but required for client-specific ones
+  },
   product: {
     type: DataTypes.STRING
   },
