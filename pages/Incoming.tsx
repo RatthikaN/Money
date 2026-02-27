@@ -221,8 +221,8 @@ export const Incoming: React.FC = () => {
   };
 
   const filtered = payments.filter(p =>
-    p.client.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.project.toLowerCase().includes(searchTerm.toLowerCase())
+    (p.client?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+    (p.project?.toLowerCase() || '').includes(searchTerm.toLowerCase())
   );
 
   const modalTitle = isViewMode ? "View Payment Details" : editingId ? "Edit Payment" : "Record New Income";

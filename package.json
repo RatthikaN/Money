@@ -1,5 +1,6 @@
 {
-  "name": "moneyflow---money-management-app",
+  "name": "Finance Tracker",
+  "homepage": "https://dev.kanakkan.com/",
   "private": true,
   "version": "0.0.0",
   "type": "module",

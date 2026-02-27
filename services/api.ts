@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { DashboardMetrics, Expense, IncomingPayment, RecurringItem, User, GeneralSettings, SmtpSettings, SocialSettings, PersonalSettings, Budget, Notification } from '../types';
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = "https://dev.kanakkan.com:5000/api";
 
 const getAuthHeader = () => {
   const token = localStorage.getItem('token');

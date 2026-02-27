@@ -41,7 +41,11 @@ export const aiService = {
               }
             },
             {
-              text: "Analyze this image. If it is an invoice or bill, extract: Shop/Vendor Name, Total Amount, Date, and itemized products. If it is not a bill, return null values."
+              text: "Analyze this image. If it is an invoice or bill, extract: Shop/Vendor Name, Total Amount, Date, and itemized products. If it is not a bill, return null values. \n\n" +
+                "IMPORTANT TAX INSTRUCTIONS:\n" +
+                "1. taxType: Use 'Inclusive' if the tax is already included in the Total Amount (look for 'Tax Included' or if Subtotal + Tax = Total). Use 'Exclusive' if the tax is shown as an additional charge added AFTER the subtotal.\n" +
+                "2. taxRate: The tax percentage (e.g., 10 for 10%).\n" +
+                "3. taxAmount: The absolute currency value of the tax."
             }
           ]
         },
@@ -55,6 +59,7 @@ export const aiService = {
               date: { type: Type.STRING, description: "YYYY-MM-DD format", nullable: true },
               taxType: { type: Type.STRING, enum: ["Inclusive", "Exclusive"], nullable: true },
               taxRate: { type: Type.NUMBER, nullable: true },
+              taxAmount: { type: Type.NUMBER, nullable: true },
               items: {
                 type: Type.ARRAY,
                 items: {

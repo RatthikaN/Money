@@ -40,11 +40,16 @@ exports.login = async (req, res) => {
         user.otpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
         await user.save();
 
-        await mailService.send({
+        const mailResult = await mailService.send({
           to: user.email,
           subject: 'Your Login Verification Code',
           html: `<p>Your verification code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
         });
+
+        if (!mailResult.success) {
+          console.error("❌ Failed to send 2FA email:", mailResult.message || mailResult.error);
+          return res.status(500).json({ message: 'Failed to send verification code. Please check SMTP settings.', error: mailResult.message || mailResult.error });
+        }
 
         console.log(`ℹ️ 2FA OTP sent to ${email}`);
         return res.json({ twoFactorRequired: true });
@@ -109,11 +114,20 @@ exports.register = async (req, res) => {
       otpExpires: new Date(Date.now() + 5 * 60 * 1000)
     });
 
-    await mailService.send({
+    const mailResult = await mailService.send({
       to: email,
       subject: 'Verify Your Email',
       html: `<p>Thank you for signing up! Your verification code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
     });
+
+    if (!mailResult.success) {
+      console.error("❌ Failed to send verification email:", mailResult.message || mailResult.error);
+      return res.status(201).json({
+        message: 'Registration successful, but failed to send verification email. Please check SMTP settings.',
+        needsVerification: true,
+        error: mailResult.message || mailResult.error
+      });
+    }
 
     res.status(201).json({ message: 'Registration successful. OTP sent to email.', needsVerification: true });
 
@@ -153,11 +167,16 @@ exports.resendOTP = async (req, res) => {
     user.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
     await user.save();
 
-    await mailService.send({
+    const mailResult = await mailService.send({
       to: email,
       subject: 'Your Verification Code',
       html: `<p>Your new verification code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
     });
+
+    if (!mailResult.success) {
+      console.error("❌ Failed to resend OTP email:", mailResult.message || mailResult.error);
+      return res.status(500).json({ message: 'Failed to send OTP. Please check SMTP settings.', error: mailResult.message || mailResult.error });
+    }
 
     res.json({ message: 'OTP resent successfully' });
   } catch (error) {
@@ -176,11 +195,16 @@ exports.forgotPassword = async (req, res) => {
     user.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
     await user.save();
 
-    await mailService.send({
+    const mailResult = await mailService.send({
       to: email,
       subject: 'Password Reset Code',
       html: `<p>Your password reset code is: <strong>${code}</strong>. It expires in 5 minutes.</p>`
     });
+
+    if (!mailResult.success) {
+      console.error("❌ Failed to send password reset email:", mailResult.message || mailResult.error);
+      return res.status(500).json({ message: 'Failed to send reset code. Please check SMTP settings.', error: mailResult.message || mailResult.error });
+    }
 
     res.json({ message: 'Password reset code sent' });
   } catch (error) {

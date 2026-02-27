@@ -177,42 +177,84 @@ export const Expenses: React.FC = () => {
             const productDescription = extracted.summary || extracted.category || 'Extracted Item';
 
             let aiItems: ExpenseItem[] = [];
+            const taxRate = extracted.taxRate || 0;
+            const taxType = (extracted.taxType === 'Inclusive' || extracted.taxType === 'Exclusive') ? extracted.taxType : 'Exclusive';
+
             if (extracted.items && extracted.items.length > 0) {
-              aiItems = extracted.items.map((i: any) => ({
-                product: i.product || 'Item',
-                amount: sanitizeAmount(i.amount),
-                tax: 0,
-                taxType: 'Exclusive',
-                taxAmount: 0,
-                subtotal: sanitizeAmount(i.amount),
-                paid: 0,
-                due: sanitizeAmount(i.amount)
-              }));
+              aiItems = extracted.items.map((i: any) => {
+                const amount = sanitizeAmount(i.amount);
+                let taxAmount = 0;
+                let subtotal = amount;
+
+                if (taxType === 'Inclusive') {
+                  const base = amount / (1 + (taxRate / 100));
+                  taxAmount = amount - base;
+                  subtotal = amount;
+                } else {
+                  taxAmount = (amount * taxRate) / 100;
+                  subtotal = amount + taxAmount;
+                }
+
+                return {
+                  product: i.product || 'Item',
+                  amount: amount,
+                  tax: taxRate,
+                  taxType: taxType,
+                  taxAmount: taxAmount,
+                  subtotal: subtotal,
+                  paid: 0,
+                  due: subtotal
+                };
+              });
             } else if (extracted.totalAmount) {
+              const totalAmount = sanitizeAmount(extracted.totalAmount);
+              let amount = totalAmount;
+              let taxAmount = 0;
+              let subtotal = totalAmount;
+
+              if (taxType === 'Inclusive') {
+                const base = totalAmount / (1 + (taxRate / 100));
+                taxAmount = totalAmount - base;
+                // amount remains totalAmount for Inclusive
+              } else {
+                // If AI says Grand Total is 3520 and it's Exclusive, then Base was 3200
+                amount = totalAmount / (1 + (taxRate / 100));
+                taxAmount = totalAmount - amount;
+                subtotal = totalAmount;
+              }
+
               aiItems = [{
-                product: 'Grand Total (Extracted)',
-                amount: sanitizeAmount(extracted.totalAmount),
-                tax: 0,
-                taxType: 'Exclusive',
-                taxAmount: 0,
-                subtotal: sanitizeAmount(extracted.totalAmount),
+                product: `${shopName} - Total`,
+                amount: amount,
+                tax: taxRate,
+                taxType: taxType,
+                taxAmount: taxAmount,
+                subtotal: subtotal,
                 paid: 0,
-                due: sanitizeAmount(extracted.totalAmount)
+                due: subtotal
               }];
             }
-            const finalItems = aiItems.length > 0 ? aiItems : [{ product: '', amount: 0, tax: 0, taxType: 'Exclusive', subtotal: 0, paid: 0, due: 0 }];
+
+            // APPEND to existing items instead of replacing
+            const newItems = aiItems.length > 0 ? aiItems : [];
+            const currentItems = items.filter(item => item.product !== ''); // Remove empty placeholder items
+            const mergedItems = [...currentItems, ...newItems];
+            const finalItems = mergedItems.length > 0 ? mergedItems : [{ product: '', amount: 0, tax: 0, taxType: 'Exclusive', taxAmount: 0, subtotal: 0, paid: 0, due: 0 }];
+
             setItems(finalItems);
             const totalActual = finalItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+
+            // Preserve existing form data if already set, otherwise use extracted data
             setFormData(prev => ({
               ...prev,
-              shop: shopName,
-              date: normalizedDate,
-              name: expenseName,
-              product: productDescription,
+              shop: prev.shop || shopName,
+              date: prev.date || normalizedDate,
+              name: prev.name || expenseName,
+              product: prev.product || productDescription,
               actualAmount: totalActual,
-              paidAmount: 0,
-              dueAmount: totalActual,
-              status: 'Pending'
+              paidAmount: prev.paidAmount || 0,
+              dueAmount: totalActual - (prev.paidAmount || 0),
+              status: prev.status || 'Pending'
             }));
           }
         }

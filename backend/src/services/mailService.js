@@ -12,35 +12,47 @@ const mailService = {
    */
   send: async ({ to, subject, text, html }) => {
     try {
+      // Priority 1: Environment Variables
+      // Priority 2: Database Settings
+
+      const envHost = process.env.SMTP_HOST;
+      const envPort = process.env.SMTP_PORT;
+      const envUser = process.env.SMTP_USER;
+      const envPass = process.env.SMTP_PASS;
+      const envSecure = process.env.SMTP_SECURE === 'true';
+      const envSenderName = process.env.SMTP_SENDER_NAME;
+      const envSenderEmail = process.env.SMTP_SENDER_EMAIL;
+
+      let smtpConfig = {};
       const config = await Setting.findByPk('cloudmail');
-      console.log('🔍 [Mail] Fetched config from DB. Raw Type:', typeof (config ? config.value : 'NULL'));
 
-      if (!config || !config.value) {
-        console.log('⚠️ [Mail] ERROR: No SMTP configuration found in the database.');
-        return { success: false, message: 'SMTP configuration missing.' };
-      }
-
-      // Defensive Parsing: Some database dialects return JSON as string
-      let smtpConfig = config.value;
-      if (typeof smtpConfig === 'string') {
-        try {
-          smtpConfig = JSON.parse(smtpConfig);
-          console.log('✨ [Mail] Config parsed from JSON string.');
-        } catch (e) {
-          console.error('❌ [Mail] Failed to parse config JSON string:', e.message);
-          return { success: false, message: 'Invalid SMTP configuration format.' };
+      if (config && config.value) {
+        smtpConfig = config.value;
+        if (typeof smtpConfig === 'string') {
+          try {
+            smtpConfig = JSON.parse(smtpConfig);
+          } catch (e) {
+            console.error('❌ [Mail] Failed to parse config JSON string:', e.message);
+          }
         }
       }
 
-      const { host, port, username, password, secure, senderName, senderEmail, isEnabled } = smtpConfig;
+      const host = envHost || smtpConfig.host;
+      const port = Number(envPort || smtpConfig.port);
+      const username = envUser || smtpConfig.username;
+      const password = envPass || smtpConfig.password;
+      const secure = envSecure !== undefined ? envSecure : (smtpConfig.secure || false);
+      const senderName = envSenderName || smtpConfig.senderName;
+      const senderEmail = envSenderEmail || smtpConfig.senderEmail;
+      const isEnabled = process.env.SMTP_ENABLED === 'true' || smtpConfig.isEnabled;
 
       if (!isEnabled) {
-        console.log('⚠️ [Mail] INFO: Delivery bypassed. Master Switch (isEnabled) is:', isEnabled);
+        console.log('⚠️ [Mail] INFO: Delivery bypassed. Master Switch (isEnabled) is OFF.');
         return { success: false, message: 'Mail delivery is disabled.' };
       }
 
       if (!host || !username) {
-        console.log('⚠️ [Mail] ERROR: SMTP Host or Username missing.');
+        console.log('⚠️ [Mail] ERROR: SMTP Host or Username missing. (Checked .env and DB)');
         return { success: false, message: 'SMTP credentials incomplete.' };
       }
 

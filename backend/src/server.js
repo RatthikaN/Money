@@ -19,17 +19,56 @@ app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true, parameterLimit: 50000 }));
 
-// Routes
-console.log('🛣️ Registering Routes...');
-app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/expenses', require('./routes/expenseRoutes'));
-app.use('/api/incoming', require('./routes/incomingRoutes'));
-app.use('/api/recurring', require('./routes/recurringRoutes'));
-app.use('/api/dashboard', require('./routes/dashboardRoutes'));
-app.use('/api/users', require('./routes/userRoutes'));
-app.use('/api/settings', require('./routes/settingsRoutes'));
-app.use('/api/notifications', require('./routes/notificationRoutes'));
+// Request Logger Middleware
+app.use((req, res, next) => {
+  console.log(`📡 [${new Date().toISOString()}] ${req.method} ${req.url} (Original: ${req.originalUrl})`);
+  next();
+});
+
+// Create a central router for all API and backend routes
+const mainRouter = express.Router();
+
+// Health check on the main router
+mainRouter.get('/', (req, res) => {
+  res.json({
+    message: '🚀 Kanakkan Backend is Running!',
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    requestedUrl: req.originalUrl,
+    baseUrl: req.baseUrl
+  });
+});
+
+// Register API routes on the main router
+console.log('🛣️ Registering Routes on Main Router...');
+mainRouter.use('/auth', require('./routes/authRoutes'));
+mainRouter.use('/expenses', require('./routes/expenseRoutes'));
+mainRouter.use('/incoming', require('./routes/incomingRoutes'));
+mainRouter.use('/recurring', require('./routes/recurringRoutes'));
+mainRouter.use('/dashboard', require('./routes/dashboardRoutes'));
+mainRouter.use('/users', require('./routes/userRoutes'));
+mainRouter.use('/settings', require('./routes/settingsRoutes'));
+mainRouter.use('/notifications', require('./routes/notificationRoutes'));
+
+// Mount the main router at multiple possible paths to handle prefixing
+app.use('/backend/api', mainRouter);
+app.use('/backend', mainRouter);
+app.use('/api', mainRouter);
+app.use('/', mainRouter);
+
 console.log('✅ Routes Registered');
+
+// 404 Handler for undefined routes
+app.use((req, res) => {
+  console.log(`❌ 404 Not Found: ${req.method} ${req.url} (Original: ${req.originalUrl})`);
+  res.status(404).json({
+    error: 'Route Not Found',
+    method: req.method,
+    url: req.url,
+    originalUrl: req.originalUrl,
+    message: 'If you expect this route to work, please check your server logs and routing configuration.'
+  });
+});
 
 // Start Job Scheduler
 require('./jobs/cron');
